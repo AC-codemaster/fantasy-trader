@@ -1,0 +1,428 @@
+<title>Projection Scorecard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: Fantasy Trader's sibling. Same turf-green masthead with yard-line ticks; below it a
+   scouting-report column: verdict first, then week-by-week, then where the misses come from. */
+:root {
+  --bg: #eceFea;
+  --surface: #f8faf6;
+  --surface-2: #e1e7e0;
+  --ink: #142019;
+  --muted: #56665c;
+  --line: #cdd6cf;
+  --field: #1f4d33;
+  --field-ink: #f1f6f1;
+  --accent: #c9420b;
+  --good: #1d7a45; --good-soft: #d7eedf;
+  --bad: #b4322a; --bad-soft: #f5dcd9;
+  --warn: #9a6210; --warn-soft: #f4e6cc;
+  --us: #eb6834;   /* series: our projections (validated pair with --fp) */
+  --fp: #2a78d6;   /* series: FantasyPros (dashed = Tuesday, solid = final) */
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "Barlow", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1511; --surface: #151f18; --surface-2: #1c2820; --ink: #e4ebe5; --muted: #95a59b; --line: #2a382f;
+    --field: #163a25; --field-ink: #e8f2ea; --accent: #ff7433;
+    --good: #4cc27e; --good-soft: #17301f; --bad: #f06a5e; --bad-soft: #3a1b18; --warn: #e3a43c; --warn-soft: #33270f;
+    --us: #d95926; --fp: #3987e5;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1511; --surface: #151f18; --surface-2: #1c2820; --ink: #e4ebe5; --muted: #95a59b; --line: #2a382f;
+  --field: #163a25; --field-ink: #e8f2ea; --accent: #ff7433;
+  --good: #4cc27e; --good-soft: #17301f; --bad: #f06a5e; --bad-soft: #3a1b18; --warn: #e3a43c; --warn-soft: #33270f;
+  --us: #d95926; --fp: #3987e5;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.45; }
+a { color: inherit; }
+.num, td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 0.86em; }
+
+.masthead {
+  background: var(--field); color: var(--field-ink);
+  background-image: repeating-linear-gradient(90deg, transparent 0 46px, rgba(255,255,255,.10) 46px 48px);
+  padding-block: 20px 18px;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding-inline: 16px; }
+.mast-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
+.brand { font-family: var(--display); font-weight: 700; font-size: 30px; letter-spacing: .04em; text-transform: uppercase; margin: 0; line-height: 1; }
+.brand span { color: var(--accent); }
+.mast-sub { margin: 8px 0 0; max-width: 64ch; opacity: .9; }
+.mast-meta { margin-left: auto; display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; opacity: .85; }
+.mast-meta a { color: var(--field-ink); }
+
+main { padding-block: 24px 64px; display: grid; gap: 34px; }
+section { display: grid; gap: 12px; min-width: 0; }
+h2 { font-family: var(--display); font-weight: 700; font-size: 24px; letter-spacing: .02em; margin: 0; text-wrap: balance; }
+h3 { font-family: var(--display); font-weight: 600; font-size: 18px; letter-spacing: .03em; margin: 0; text-wrap: balance; }
+.lede { color: var(--muted); margin: 0; max-width: 68ch; }
+.label { font-family: var(--display); font-weight: 600; font-size: 12.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+.box { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; min-width: 0; }
+.grid2 { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); }
+.grid4 { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+
+.pill { display: inline-block; font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 9px; border-radius: 99px; white-space: nowrap; }
+.pill.ahead { background: var(--good-soft); color: var(--good); }
+.pill.behind { background: var(--bad-soft); color: var(--bad); }
+.pill.even { background: var(--surface-2); color: var(--ink); }
+.pill.early { background: var(--surface-2); color: var(--muted); }
+.pill.flag { background: var(--warn-soft); color: var(--warn); }
+
+.vs { display: grid; gap: 12px; align-content: start; }
+.vs-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.vs-rows { display: grid; gap: 10px; }
+.vs-row { display: grid; grid-template-columns: minmax(7.5em, 1fr) auto auto; gap: 4px 12px; align-items: baseline; border-top: 1px dashed var(--line); padding-top: 8px; }
+.vs-row .what { font-weight: 600; }
+.vs-row .what small { display: block; font-weight: 400; color: var(--muted); font-size: 12.5px; }
+.vs-row .vals { font-family: var(--mono); font-size: 14px; text-align: right; white-space: nowrap; }
+.vs-row .vals b { font-weight: 500; color: var(--us); }
+.vs-row .diff { font-family: var(--mono); font-size: 12.5px; color: var(--muted); text-align: right; grid-column: 2 / 4; }
+
+.goal { display: grid; gap: 10px; }
+.goal-bars { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); }
+.meter { height: 8px; background: var(--surface-2); border-radius: 99px; overflow: hidden; margin-top: 4px; }
+.meter > i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+.meter-note { font-size: 13px; color: var(--muted); }
+
+.frozen-cols { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); }
+table { border-collapse: collapse; width: 100%; }
+th { text-align: left; font-family: var(--display); font-weight: 600; font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th.n, td.n { text-align: right; }
+td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+table.mini td, table.mini th { padding: 4px 6px; }
+.tablewrap { overflow-x: auto; }
+td .sub { display: block; font-size: 12.5px; color: var(--muted); }
+tr.us td:first-child { box-shadow: inset 3px 0 0 var(--us); }
+tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
+
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; }
+.chart text { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13.5px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend svg { width: 26px; height: 10px; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,.12); min-width: 170px; }
+.tip b { font-family: var(--display); letter-spacing: .04em; }
+.tip .r { display: flex; justify-content: space-between; gap: 12px; font-family: var(--mono); font-size: 12.5px; }
+
+.diag { display: grid; gap: 2px; }
+.drow { display: grid; grid-template-columns: minmax(10em, 15em) 1fr 7.5em; gap: 6px 12px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.drow:last-child { border-bottom: 0; }
+.drow .g small { display: block; color: var(--muted); font-size: 12px; }
+.drow .v { font-family: var(--mono); font-size: 12.5px; text-align: right; }
+.dbar { position: relative; height: 18px; }
+.dbar .zero { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--muted); }
+.dbar .bar { position: absolute; top: 5px; height: 8px; background: var(--muted); border-radius: 2px; }
+.dbar .bar.flag { background: var(--warn); }
+.dbar .ci { position: absolute; top: 8px; height: 2px; background: var(--ink); opacity: .35; }
+.dbar .fpm { position: absolute; top: 3px; width: 10px; height: 10px; margin-left: -5px; border: 2px solid var(--fp); border-radius: 50%; background: var(--surface); }
+.diag-key { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--muted); }
+.diag-key i { display: inline-block; vertical-align: -1px; margin-right: 5px; }
+
+.cands { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.cands li { border-left: 3px solid var(--warn); padding: 4px 0 4px 12px; }
+.empty { border: 1px dashed var(--line); border-radius: var(--r); padding: 18px; color: var(--muted); }
+.prose { max-width: 68ch; }
+.prose p { margin: 0 0 10px; }
+.chip { display: inline-block; font-family: var(--display); font-weight: 700; font-size: 11.5px; letter-spacing: .06em; padding: 0 5px; border-radius: 4px; background: var(--surface-2); color: var(--muted); margin-right: 4px; }
+.note-tag { display: inline-block; font-size: 11.5px; padding: 0 7px; border-radius: 99px; background: var(--surface-2); color: var(--muted); margin: 2px 4px 0 0; white-space: nowrap; }
+@media (max-width: 560px) {
+  .brand { font-size: 25px; }
+  .mast-meta { margin-left: 0; }
+  .drow { grid-template-columns: 1fr 6.5em; }
+  .drow .dbar { grid-column: 1 / -1; grid-row: 2; }
+}
+</style>
+
+<header class="masthead">
+  <div class="wrap">
+    <div class="mast-row">
+      <h1 class="brand">Projection <span>Scorecard</span></h1>
+      <div class="mast-meta">
+        <span id="updated">Loading…</span>
+        <a href="https://claude.ai/artifact/QYtsAKr3WaL59s1xWMcw1C" target="_blank" rel="noopener">Open Fantasy Trader ↗</a>
+      </div>
+    </div>
+    <p class="mast-sub">Every Tuesday the page's projections for the coming week are frozen. After the games they're graded against what players actually scored, side by side with FantasyPros' expert consensus.</p>
+  </div>
+</header>
+
+<main class="wrap" id="app">
+  <section><p class="lede">Loading the scorecard…</p></section>
+</main>
+
+<script>
+(function () {
+  const $app = document.getElementById("app");
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const f = (x, d = 2) => (x == null || !isFinite(x) ? "–" : (+x).toFixed(d));
+  const sgn = (x, d = 2) => (x == null || !isFinite(x) ? "–" : (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(d));
+  const day = (iso) => { if (!iso) return "–"; const t = new Date(iso); return isNaN(t) ? esc(iso) : t.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); };
+  const PILL = { "ahead": ["ahead", "Ahead"], "behind": ["behind", "Behind"], "even (not significant)": ["even", "Even so far"], "too early": ["early", "Too early"] };
+  const pill = (v) => { const [c, t] = PILL[v] || ["early", "Too early"]; return `<span class="pill ${c}">${t}</span>`; };
+
+  fetch("data/scorecard.json", { cache: "no-store" })
+    .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(render)
+    .catch((e) => { $app.innerHTML = `<section><div class="empty">The scorecard data (data/scorecard.json) didn't load: ${esc(e.message)}. The weekly run publishes it; try reloading.</div></section>`; });
+
+  function render(o) {
+    document.getElementById("updated").textContent = "Updated " + day(o.updated);
+    const L = o.labels || {};
+    const parts = [];
+    const graded = (o.weeks || []).length > 0;
+    parts.push(standing(o, graded));
+    if ((o.pending || []).length) parts.push(pending(o));
+    if (graded) {
+      parts.push(weekly(o));
+      parts.push(sources(o, L));
+      parts.push(diagnostics(o));
+      parts.push(volume(o));
+      parts.push(candidates(o));
+      parts.push(misses(o));
+    }
+    parts.push(method(o));
+    $app.innerHTML = parts.join("");
+    if (graded) drawChart(o);
+  }
+
+  function vsCard(title, sub, c) {
+    if (!c) return "";
+    const v = c.verdict || {};
+    const overall = [v.mae, v.pairs].includes("behind") ? "behind" : v.mae === "ahead" && v.pairs !== "behind" ? "ahead" : v.mae === "too early" ? "too early" : "even (not significant)";
+    const row = (what, small, x, unit, d, low, key) => !x ? "" : `
+      <div class="vs-row">
+        <div class="what">${what}<small>${small}</small></div>
+        <div class="vals"><b>${f(x.a, d)}</b> vs ${f(x.b, d)}${unit}</div>
+        <div>${pill(v[key])}</div>
+        <div class="diff">${sgn(x.diff, d)}${unit} ± ${f(x.se != null ? 1.96 * x.se : null, d)} · ${x.n.toLocaleString()} ${key === "pairs" ? "pairs" : "players"}</div>
+      </div>`;
+    return `<div class="box vs">
+      <div class="vs-head"><h3>${title}</h3>${pill(overall)}</div>
+      <p class="lede" style="font-size:13.5px">${sub}</p>
+      <div class="vs-rows">
+        ${row("Average miss", "points per player, lower is better", c.mae, " pts", 2, true, "mae")}
+        ${row("Start/sit calls", "close same-position pairs ordered right", c.pairs, "%", 1, false, "pairs")}
+        ${c.rho ? `<div class="vs-row"><div class="what">Rank correlation<small>within position, higher is better</small></div><div class="vals">${sgn(c.rho.diff, 3)}</div><div>${pill(v.rho)}</div><div class="diff">± ${f(c.rho.se != null ? 1.96 * c.rho.se : null, 3)} · ${c.rho.n} position-weeks</div></div>` : ""}
+      </div>
+    </div>`;
+  }
+
+  function standing(o, graded) {
+    if (!graded) {
+      return `<section><h2>Where we stand</h2>
+        <div class="empty">No week has been graded yet. The first frozen week is graded the Tuesday after its games, and this page fills in then.</div></section>`;
+    }
+    const c = o.cumulative, g = o.goal || {};
+    const wk = Math.min(1, (g.weeks || 0) / (g.needWeeks || 6));
+    const gap = g.maeGapPct, gapW = gap == null ? 0 : Math.max(0, Math.min(1, gap / ((g.maeTargetPct || 3) * 2)));
+    return `<section>
+      <h2>Where we stand</h2>
+      <p class="lede">Bold numbers are ours. Ranges are 95% intervals; a verdict needs the whole interval on one side of zero. Fantasy-relevant players who played, PPR scoring.</p>
+      <div class="grid2">
+        ${vsCard("Against FantasyPros, final", "Their last consensus before each kickoff, with the whole week's news. The bar for “better than any public site”.", c.page_vs_final)}
+        ${vsCard("Against FantasyPros, Tuesday", "Their first rankings of the week: the same information we froze with. Measures the model itself.", c.page_vs_early)}
+      </div>
+      <div class="box goal">
+        <div class="vs-head"><h3>Goal: considerably more accurate</h3><span class="pill ${g.met ? "ahead" : "early"}">${g.met ? "Met" : "Not yet"}</span></div>
+        <p class="lede" style="font-size:13.5px">Beat FantasyPros' final consensus by at least ${g.maeTargetPct || 3}% in average miss with 95% confidence, and make more right start/sit calls, over at least ${g.needWeeks || 6} graded weeks.</p>
+        <div class="goal-bars">
+          <div><div class="label">Graded weeks</div><div class="meter"><i style="width:${(wk * 100).toFixed(0)}%"></i></div><div class="meter-note">${g.weeks || 0} of ${g.needWeeks || 6}</div></div>
+          <div><div class="label">Average-miss lead</div><div class="meter"><i style="width:${(gapW * 100).toFixed(0)}%"></i></div><div class="meter-note">${gap == null ? "–" : sgn(gap, 1) + "%"} vs a ${g.maeTargetPct || 3}% target${g.maeSig ? " · significant" : ""}</div></div>
+          <div><div class="label">Start/sit lead</div><div class="meter"><i style="width:${g.pairsGap == null ? 0 : Math.max(0, Math.min(100, g.pairsGap * 10)).toFixed(0)}%"></i></div><div class="meter-note">${g.pairsGap == null ? "–" : sgn(g.pairsGap, 1) + " points"}${g.pairsSig ? " · significant" : ""}</div></div>
+        </div>
+      </div>
+    </section>`;
+  }
+
+  function pending(o) {
+    return o.pending.map((p) => `<section>
+      <h2>Week ${p.week}: frozen, waiting for games</h2>
+      <p class="lede">Frozen ${day(p.frozenAt)} from page data built ${day(p.pageBuilt)}: ${p.n} players (${p.nAvail} expected to play). Graded the Tuesday after the week ends.${p.note ? " " + esc(p.note) + "." : ""}</p>
+      <div class="frozen-cols">
+        ${["QB", "RB", "WR", "TE"].map((pos) => `<div class="box"><div class="label">${pos} · top projections</div>
+          <table class="mini"><thead><tr><th>Player</th><th class="n">Ours</th><th class="n">FP</th></tr></thead><tbody>
+          ${(p.top[pos] || []).map((r) => `<tr><td>${esc(r.name)} <span class="sub" style="display:inline">${esc(r.team)}</span></td><td class="n">${f(r.page, 1)}</td><td class="n">${f(r.fp, 1)}</td></tr>`).join("")}
+          </tbody></table></div>`).join("")}
+      </div>
+      <p class="lede" style="font-size:13px">FP = FantasyPros projected points when we froze. Grading uses their first and last numbers of the week from their history.</p>
+    </section>`).join("");
+  }
+
+  function weekly(o) {
+    const rows = o.weeks.map((w) => {
+      const M = w.metrics, p = (w.vsFinal && w.vsFinal.pairs) || {};
+      return `<tr><td>Week ${w.week}${w.status !== "final" ? ' <span class="note-tag">partial</span>' : ""}</td>
+        <td class="n">${f(M.page.mae)}</td><td class="n">${f(M.model.mae)}</td><td class="n">${f(M.fp_early.mae)}</td><td class="n">${f(M.fp_final.mae)}</td>
+        <td class="n">${f(p.a, 1)} / ${f(p.b, 1)}</td><td class="n">${w.nRel}</td></tr>`;
+    }).join("");
+    return `<section>
+      <h2>Week by week</h2>
+      <p class="lede">Average miss in PPR points per fantasy-relevant player who played. Lower is better.</p>
+      <div class="box">
+        <div class="legend" aria-hidden="true">
+          <span><svg viewBox="0 0 26 10"><line x1="1" y1="5" x2="25" y2="5" stroke="var(--us)" stroke-width="2"/></svg>Our page</span>
+          <span><svg viewBox="0 0 26 10"><line x1="1" y1="5" x2="25" y2="5" stroke="var(--fp)" stroke-width="2" stroke-dasharray="4 3"/></svg>FantasyPros, Tuesday</span>
+          <span><svg viewBox="0 0 26 10"><line x1="1" y1="5" x2="25" y2="5" stroke="var(--fp)" stroke-width="2"/></svg>FantasyPros, final</span>
+        </div>
+        <div class="chart" id="chart" role="img" aria-label="Average miss per week: our page vs FantasyPros"></div>
+      </div>
+      <div class="box tablewrap"><table>
+        <thead><tr><th>Week</th><th class="n">Our page</th><th class="n">Model only</th><th class="n">FP Tue</th><th class="n">FP final</th><th class="n">Start/sit % us / FP final</th><th class="n">Players</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+    </section>`;
+  }
+
+  function drawChart(o) {
+    const el = document.getElementById("chart");
+    if (!el) return;
+    const W = o.weeks.map((w) => w.week);
+    const S = [
+      { k: "page", name: "Our page", color: "var(--us)", dash: "" },
+      { k: "fp_early", name: "FantasyPros, Tuesday", color: "var(--fp)", dash: "5 4" },
+      { k: "fp_final", name: "FantasyPros, final", color: "var(--fp)", dash: "" },
+    ];
+    const val = (w, k) => w.metrics[k] && w.metrics[k].mae;
+    const all = o.weeks.flatMap((w) => S.map((s) => val(w, s.k))).filter((x) => x != null);
+    if (!all.length) { el.innerHTML = '<div class="empty">No points to plot yet.</div>'; return; }
+    let lo = Math.floor(Math.min(...all) - 0.3), hi = Math.ceil(Math.max(...all) + 0.3);
+    if (hi - lo < 2) hi = lo + 2;
+    const w = 720, h = 260, ml = 44, mr = 18, mt = 14, mb = 30;
+    const xs = (i) => W.length === 1 ? ml + (w - ml - mr) / 2 : ml + (i * (w - ml - mr)) / (W.length - 1);
+    const ys = (v) => mt + ((hi - v) * (h - mt - mb)) / (hi - lo);
+    let g = "";
+    const step = hi - lo > 4 ? 1 : 0.5;
+    for (let t = lo; t <= hi + 1e-9; t += step) g += `<line x1="${ml}" x2="${w - mr}" y1="${ys(t)}" y2="${ys(t)}" stroke="var(--line)" stroke-width="1"/><text x="${ml - 8}" y="${ys(t) + 4}" text-anchor="end">${t.toFixed(step < 1 ? 1 : 0)}</text>`;
+    W.forEach((wk, i) => { g += `<text x="${xs(i)}" y="${h - 8}" text-anchor="middle">Wk ${wk}</text>`; });
+    for (const s of S) {
+      const pts = o.weeks.map((wk, i) => [xs(i), val(wk, s.k)]).filter((p) => p[1] != null).map((p) => [p[0], ys(p[1])]);
+      if (pts.length > 1) g += `<polyline fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-dasharray="${s.dash}" points="${pts.map((p) => p.join(",")).join(" ")}"/>`;
+      for (const p of pts) g += `<circle cx="${p[0]}" cy="${p[1]}" r="4.5" fill="${s.dash ? "var(--surface)" : s.color}" stroke="${s.color}" stroke-width="2"/>`;
+    }
+    const hits = W.map((wk, i) => {
+      const x0 = W.length === 1 ? ml : i === 0 ? ml : (xs(i - 1) + xs(i)) / 2, x1 = W.length === 1 ? w - mr : i === W.length - 1 ? w - mr : (xs(i) + xs(i + 1)) / 2;
+      return `<rect data-i="${i}" x="${x0}" y="${mt}" width="${x1 - x0}" height="${h - mt - mb}" fill="transparent"/>`;
+    }).join("");
+    el.innerHTML = `<svg viewBox="0 0 ${w} ${h}">${g}<line id="xh" x1="0" x2="0" y1="${mt}" y2="${h - mb}" stroke="var(--muted)" stroke-width="1" opacity="0"/>${hits}</svg><div class="tip" hidden></div>`;
+    const tip = el.querySelector(".tip"), xh = el.querySelector("#xh"), svg = el.querySelector("svg");
+    svg.addEventListener("pointermove", (e) => {
+      const r = e.target.closest("rect[data-i]");
+      if (!r) { tip.hidden = true; xh.setAttribute("opacity", 0); return; }
+      const i = +r.dataset.i, wk = o.weeks[i], x = xs(i);
+      xh.setAttribute("x1", x); xh.setAttribute("x2", x); xh.setAttribute("opacity", 0.6);
+      tip.innerHTML = `<b>Week ${wk.week}</b>` + S.map((s) => `<div class="r"><span>${s.name}</span><span>${f(val(wk, s.k))}</span></div>`).join("") + `<div class="r"><span>Players</span><span>${wk.nRel}</span></div>`;
+      tip.hidden = false;
+      const bb = el.getBoundingClientRect(), px = (x / w) * bb.width;
+      tip.style.left = Math.min(bb.width - tip.offsetWidth - 4, Math.max(4, px + 12)) + "px";
+      tip.style.top = "10px";
+    });
+    svg.addEventListener("pointerleave", () => { tip.hidden = true; xh.setAttribute("opacity", 0); });
+  }
+
+  function sources(o, L) {
+    const c = o.cumulative;
+    const row = (k, m) => `<tr class="${k.startsWith("fp") ? "fp" : "us"}"><td>${esc(L[k] || k)}</td><td class="n">${m.n || 0}</td><td class="n">${f(m.mae)}</td><td class="n">${sgn(m.bias)}</td><td class="n">${f(m.rmse)}</td><td class="n">${f(m.r)}</td><td class="n">${f(m.rho, 3)}</td><td class="n">${f(m.pairs, 1)}</td></tr>`;
+    const pos = ["QB", "RB", "WR", "TE"].map((p) => {
+      const b = c.byPos[p] || {}, us = b.page || {}, e = b.fp_early || {}, fin = b.fp_final || {};
+      return `<tr><td><span class="chip">${p}</span></td><td class="n">${us.n || 0}</td><td class="n">${f(us.mae)}</td><td class="n">${f(e.mae)}</td><td class="n">${f(fin.mae)}</td><td class="n">${f(us.pairs, 1)}</td><td class="n">${f(fin.pairs, 1)}</td></tr>`;
+    }).join("");
+    return `<section>
+      <h2>All graded weeks</h2>
+      <p class="lede">“Actual − proj” above zero means projections ran low. Start/sit % counts same-position pairs within ${o.close || 12} consensus ranks of each other that were ordered right.</p>
+      <div class="box tablewrap"><table>
+        <thead><tr><th>Source</th><th class="n">Players</th><th class="n">Avg miss</th><th class="n">Actual − proj</th><th class="n">RMSE</th><th class="n">r</th><th class="n">Rank corr</th><th class="n">Start/sit %</th></tr></thead>
+        <tbody>${["page", "model", "fp_early", "fp_final"].map((k) => row(k, c.rel[k] || {})).join("")}</tbody></table></div>
+      <div class="box tablewrap"><h3 style="margin-bottom:6px">By position</h3><table>
+        <thead><tr><th>Pos</th><th class="n">Players</th><th class="n">Our miss</th><th class="n">FP Tue</th><th class="n">FP final</th><th class="n">Our start/sit %</th><th class="n">FP final start/sit %</th></tr></thead>
+        <tbody>${pos}</tbody></table></div>
+    </section>`;
+  }
+
+  function diagnostics(o) {
+    const d = o.diagnostics, rows = d.byPos.concat(d.groups);
+    const span = Math.max(3, ...rows.map((r) => Math.abs(r.resid || 0) + 1.96 * (r.se || 0)), ...rows.map((r) => Math.abs(r.fpResid || 0)));
+    const X = (v) => 50 + (Math.max(-span, Math.min(span, v)) / span) * 50;
+    const drow = (r) => {
+      const m = r.resid || 0, a = X(Math.min(0, m)), b = X(Math.max(0, m));
+      const ci = r.se != null ? `<i class="ci" style="left:${X(m - 1.96 * r.se)}%;width:${X(m + 1.96 * r.se) - X(m - 1.96 * r.se)}%"></i>` : "";
+      const fp = r.fpResid != null ? `<i class="fpm" style="left:${X(r.fpResid)}%" title="FantasyPros final ${sgn(r.fpResid)}"></i>` : "";
+      return `<div class="drow">
+        <div class="g">${esc(r.group)} ${r.flag ? '<span class="pill flag">Check</span>' : ""}<small>${r.n} players · our miss ${f(r.maeUs ?? r.mae)} vs FP ${f(r.maeFp)}</small></div>
+        <div class="dbar"><i class="zero"></i>${ci}<i class="bar${r.flag ? " flag" : ""}" style="left:${a}%;width:${Math.max(0.5, b - a)}%"></i>${fp}</div>
+        <div class="v">${sgn(r.resid)} <span class="sub" style="display:inline">± ${f(r.se != null ? 1.96 * r.se : null)}</span></div>
+      </div>`;
+    };
+    return `<section>
+      <h2>Where our misses lean</h2>
+      <p class="lede">Average of actual − our projection, by position and situation. Right of the center line = we projected too low. A group gets “Check” when the lean is at least 1.5 points, 2.5 standard errors from zero, with 25+ players (60+ for a position).</p>
+      <div class="box">
+        <div class="diag-key"><span><i style="width:16px;height:8px;background:var(--muted);border-radius:2px"></i>our lean</span><span><i style="width:16px;height:2px;background:var(--ink);opacity:.35"></i>95% range</span><span><i style="width:10px;height:10px;border:2px solid var(--fp);border-radius:50%"></i>FantasyPros final, same players</span><span>scale ± ${span.toFixed(1)} pts</span></div>
+        <div class="diag">${rows.map(drow).join("")}</div>
+      </div>
+    </section>`;
+  }
+
+  function volume(o) {
+    const d = o.diagnostics;
+    const vol = d.volume.map((r) => `<tr><td><span class="chip">${r.pos}</span></td><td class="n">${r.n}</td><td class="n">${sgn(r.oppBias)} <span class="sub" style="display:inline">± ${f(r.oppSe != null ? 1.96 * r.oppSe : null)}</span></td><td class="n">${f(r.volMae)}</td><td class="n">${f(r.effMae)}</td></tr>`).join("");
+    const cal = d.calibration.map((r) => `<tr><td>${esc(r.bucket)}</td><td class="n">${r.n}</td><td class="n">${f(r.proj)}</td><td class="n">${f(r.act)}</td><td class="n">${f(r.fp)}</td></tr>`).join("");
+    const s = d.slopes && d.slopes.all;
+    const blend = Object.entries(d.blend || {}).map(([k, b]) => `<li>Mixing in ${(b.best * 100).toFixed(0)}% of ${esc((o.labels || {})[k] || k)}'s points gives the smallest miss (${f(b.maeBest)} vs ${f(b.maePage)} for ours alone, ${f(b.maeFp)} for theirs; ${b.n} players).</li>`).join("");
+    return `<section>
+      <h2>Volume or efficiency</h2>
+      <div class="grid2">
+        <div class="box tablewrap"><h3>Opportunities</h3>
+          <p class="lede" style="font-size:13.5px;margin:4px 0 8px">Carries + targets (QBs: pass attempts), actual − projected, and how much of the usage model's miss comes from volume vs per-play production.</p>
+          <table><thead><tr><th>Pos</th><th class="n">Players</th><th class="n">Opps actual − proj</th><th class="n">Miss from volume</th><th class="n">Miss per play</th></tr></thead><tbody>${vol}</tbody></table></div>
+        <div class="box tablewrap"><h3>Calibration</h3>
+          <p class="lede" style="font-size:13.5px;margin:4px 0 8px">Average actual points for players we projected in each range.${s ? ` Overall, actual rises ${f(s.slope)} points per projected point (± ${f(1.96 * s.se)}); 1.00 is calibrated.` : ""}</p>
+          <table><thead><tr><th>Projected</th><th class="n">Players</th><th class="n">Ours</th><th class="n">Actual</th><th class="n">FP final</th></tr></thead><tbody>${cal}</tbody></table></div>
+      </div>
+      ${blend ? `<div class="box"><h3>Blending with FantasyPros</h3><ul class="prose" style="margin:6px 0 0;padding-left:18px">${blend}</ul></div>` : ""}
+    </section>`;
+  }
+
+  function candidates(o) {
+    const c = o.candidates || [];
+    return `<section>
+      <h2>Changes worth testing</h2>
+      <p class="lede">Raised automatically when the evidence clears the thresholds. Each one gets backtested on 2024–26 before it goes into the model.</p>
+      ${c.length ? `<ul class="cands">${c.map((x) => `<li><b>${esc(x.area)}</b>: ${esc(x.evidence)}. <span class="muted">Idea: ${esc(x.idea)}.</span></li>`).join("")}</ul>`
+        : `<div class="empty">Nothing yet. Leans have to hold up over several graded weeks before they count as evidence.</div>`}
+    </section>`;
+  }
+
+  function misses(o) {
+    const m = o.misses || { rows: [] };
+    return `<section>
+      <h2>Biggest misses, week ${m.week}</h2>
+      <div class="box tablewrap"><table>
+        <thead><tr><th>Player</th><th class="n">Ours</th><th class="n">FP final</th><th class="n">Actual</th><th class="n">Opps proj → actual</th><th>Situation</th></tr></thead>
+        <tbody>${m.rows.map((r) => `<tr><td><b>${esc(r.name)}</b> <span class="sub" style="display:inline">${r.pos} ${esc(r.team)}</span></td><td class="n">${f(r.page, 1)}</td><td class="n">${f(r.fp, 1)}</td><td class="n">${f(r.act, 1)}</td><td class="n">${esc(r.opp)}</td><td>${(r.notes || []).map((n) => `<span class="note-tag">${esc(n)}</span>`).join("")}</td></tr>`).join("")}</tbody>
+      </table></div>
+    </section>`;
+  }
+
+  function method(o) {
+    const n = o.relN || { QB: 24, RB: 48, WR: 60, TE: 24 };
+    return `<section>
+      <h2>How it's graded</h2>
+      <div class="prose">
+        <p><b>Freeze.</b> Right after the Tuesday data refresh, the weekly run loads the published Fantasy Trader page and runs its own engine with default settings (12 teams, PPR). Every player's projection for the coming week is saved with its parts: carries, targets, attempts, yards, touchdowns, plus the situation flags shown above. A frozen week is never edited.</p>
+        <p><b>Grade.</b> The next Tuesday, after the games, each projection is compared with the player's real stat line from nflverse. Only players who took an offensive snap count, so a late scratch isn't held against anyone. The main set is fantasy-relevant players: the top ${n.QB} QBs, ${n.RB} RBs, ${n.WR} WRs and ${n.TE} TEs by our projection or by FantasyPros.</p>
+        <p><b>Benchmark.</b> FantasyPros' weekly expert consensus pools rankings from dozens of public sites. Its rank and projected points come from DynastyProcess's twice-daily snapshots: the first snapshot of the week (Tuesday, the same information we had) and the last one before each player's kickoff (final, with all the week's injury news).</p>
+        <p><b>Metrics.</b> Average miss is the mean absolute difference in PPR points. Start/sit calls are same-position pairs within ${o.close || 12} consensus ranks of each other; a source gets the call right when it ranked the higher scorer first. Intervals account for players in the same game moving together.</p>
+      </div>
+    </section>`;
+  }
+})();
+</script>

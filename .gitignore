@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+/work/
+/cache/
+dp-history/
+dynastyprocess-data/
+*.tmp
