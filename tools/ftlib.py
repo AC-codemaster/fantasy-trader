@@ -56,3 +56,19 @@ def esc_script(text, js=False):
     if js:
         return re.sub(r"</(script)", r"<\\/\1", text, flags=re.I)
     return text.replace("</", "<\\/")
+
+
+def dump_params(pj, path=None):
+    """Write params.json with one parameter per line, so every change is a one-line diff."""
+    head = {k: v for k, v in pj.items() if k != "params"}
+    lines = ["{"]
+    for k, v in head.items():
+        lines.append(f"  {json.dumps(k)}: {json.dumps(v, ensure_ascii=False)},")
+    lines.append('  "params": {')
+    items = list(pj["params"].items())
+    w = max(len(k) for k, _ in items) + 3
+    for i, (k, v) in enumerate(items):
+        key = (json.dumps(k) + ":").ljust(w)
+        lines.append(f"    {key}{json.dumps(v, ensure_ascii=False)}{',' if i < len(items) - 1 else ''}")
+    lines += ["  }", "}"]
+    open(path or PARAMS_PATH, "w").write("\n".join(lines) + "\n")

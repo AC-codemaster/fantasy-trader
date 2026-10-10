@@ -138,6 +138,9 @@ def improvement_gate_behaves():
     weak = json.loads(json.dumps(good))
     weak["z"] = -2.0
     assert not improve.gate(weak)[0]
+    tiny = json.loads(json.dumps(good))
+    tiny["diff"] = -0.001
+    assert not improve.gate(tiny)[0]                                            # below the minimum gain
     pj = load_params_file()
     assert improve.stepped(pj["params"]["decay"], 1.0, +1) is None          # at the bound
     assert improve.stepped(pj["params"]["K_cr"], 40, +1) == 50.0

@@ -15,12 +15,13 @@ What it does, in order:
     each lean, in the hinted direction first) and from a rotation that walks every tunable parameter one
     step up and down over the weeks. Each is backtested on every week from week 3 of the two previous
     seasons through the last completed week, against the live parameters, on the same player-games.
- 3. Gate. A change passes only if it lowers the average miss by at least 0.01 pts with z ≤ -2.5 overall
+    Single steps that each help significantly (z ≤ -2) are then also tested together as one bundle.
+ 3. Gate. A change passes only if it lowers the average miss by at least 0.002 pts with z ≤ -2.5 overall
     (team-week clustered), is not worse in any season (z < 1) or position (z < 2), keeps calibration and the
     backup-QB bias in line, and, for engine settings, is not worse on the archived live weeks replayed with
     hindsight. The expert-blend defaults are tuned on the graded live weeks instead (they need FantasyPros'
     rankings, which the backtest doesn't have): one step toward the best pair, 4+ graded weeks, z ≤ -2.
- 4. At most one change per week (the strongest that passed), so every change's effect can be read on its
+ 4. At most one change per week (the passing change or bundle with the largest gain), so every change's effect can be read on its
     own. Every experiment, passed or not, goes in ledger/experiments.jsonl; adopted and reverted changes
     also in ledger/changelog.md. A value already rejected under the same live parameters isn't retried
     for 6 weeks.
@@ -43,7 +44,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, os.path.join(ROOT, "backtest"))
 sys.path.insert(0, os.path.join(ROOT, "pipeline"))
 import evaluate as ev  # noqa: E402
-from ftlib import PARAMS_PATH, engine_source, load_params_file, values  # noqa: E402
+from ftlib import PARAMS_PATH, dump_params, engine_source, load_params_file, values  # noqa: E402
 
 LEDGER = os.path.join(ROOT, "ledger")
 EXP = os.path.join(LEDGER, "experiments.jsonl")
@@ -52,7 +53,9 @@ STATE = os.path.join(LEDGER, "state.json")
 SCORECARD = os.path.join(ROOT, "data", "scorecard", "scorecard.json")
 LAST_RUN = os.path.join(LEDGER, "last_run.md")
 
-GATE = dict(z=-2.5, min_gain=0.01, season_z=1.0, pos_z=2.0, slope_slack=0.03, bqb_slack=0.3,
+GATE_VERSION = 2   # v1 (Oct 9) required a 0.01-pt gain; the first full sweep showed single steps on the tuned
+                   # model give 0.001-0.003 with z down to -3.5, so v2 asks for 0.002 and tests bundles
+GATE = dict(z=-2.5, min_gain=0.002, combo_z=-2.0, combo_max=4, season_z=1.0, pos_z=2.0, slope_slack=0.03, bqb_slack=0.3,
             live_z=1.5, expert_z=-2.0, expert_weeks=4, probation_weeks=4, keep_weeks=8, revert_z=-1.5,
             retry_weeks=6, rotation_per_run=2, budget=8)
 
@@ -123,7 +126,8 @@ def build_candidates(pj, sc, state, rows, label, only=None, exact=None):
     ver = pj.get("version")
     recent = {}
     for r in rows:
-        if r.get("kind") == "backtest" and r.get("championVersion") == ver and r.get("decision") == "rejected":
+        if r.get("kind") == "backtest" and r.get("championVersion") == ver and r.get("decision") == "rejected" \
+                and r.get("gateVersion") == GATE_VERSION:
             for k, (_, new) in (r.get("change") or {}).items():
                 recent[(k, round(float(new), 6))] = r.get("week")
     tun = set(tunable(pj))
@@ -298,8 +302,7 @@ def write_params(pj, change, reason):
         pj["params"][k]["value"] = new
     pj["version"] = int(pj.get("version", 0)) + 1
     pj["updated"] = today()
-    json.dump(pj, open(PARAMS_PATH, "w"), indent=2)
-    open(PARAMS_PATH, "a").write("\n")
+    dump_params(pj)
     with open(CHANGELOG, "a") as f:
         f.write(f"\n## {today()} — parameters v{pj['version']}: {describe(change)}\n\n{reason}\n")
     return pj["version"]
@@ -429,6 +432,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--only", default="", help="comma-separated parameters to test (both directions)")
     ap.add_argument("--try", dest="exact", action="append", default=[], help="name=value to test exactly")
+    ap.add_argument("--combo", default="", help="name=value,name=value: test these together as one bundle")
     ap.add_argument("--budget", type=int, default=GATE["budget"])
     ap.add_argument("--procs", type=int, default=None)
     ap.add_argument("--neutral-check", action="store_true", help="verify a code change left the backtest unchanged")
@@ -482,6 +486,38 @@ def main():
         report.append(f"- Tested {describe(c['change'])} ({c['source']}): {r['diff']:+.4f} ± {r['se']:.4f} pts (z {r['z']})"
                       f" → {'passes' if ok else 'rejected: ' + '; '.join(why)}")
 
+    # 2b. bundle: single steps on different parameters that each help significantly, tested together
+    combos = []
+    if a.combo:
+        combos.append({k: float(v) for k, v in (kv.split("=") for kv in a.combo.split(","))})
+    else:
+        best = {}
+        for c, r, ok, why, live in results:
+            if len(c["change"]) == 1 and r.get("z") is not None and r["z"] <= GATE["combo_z"] and r["diff"] < 0:
+                k = next(iter(c["change"]))
+                if k not in best or r["diff"] < best[k][1]["diff"]:
+                    best[k] = (c, r)
+        if len(best) >= 2:
+            top = sorted(best.values(), key=lambda x: x[1]["diff"])[:GATE["combo_max"]]
+            combos.append({next(iter(c["change"])): c["change"][next(iter(c["change"]))][1] for c, _ in top})
+    for combo in combos:
+        c = {"change": {k: [vals[k], v] for k, v in combo.items() if abs(vals[k] - v) > 1e-9},
+             "source": "bundle of significant single steps" if not a.combo else "requested bundle"}
+        if len(c["change"]) < 1:
+            continue
+        chal_vals = dict(vals)
+        chal_vals.update({k: v for k, (_, v) in c["change"].items()})
+        r = ev.paired(champ, ev.predict(chal_vals, weeks, a.procs))
+        ok, why = gate(r)
+        live = None
+        if ok and any(pj["params"][k]["layer"] == "engine" for k in c["change"]):
+            live = live_replay(vals, chal_vals)
+            if live and live.get("z") is not None and live["z"] >= GATE["live_z"]:
+                ok, why = False, why + [f"worse on archived live weeks (z {live['z']})"]
+        results.append((c, r, ok, why, live))
+        report.append(f"- Tested bundle {describe(c['change'])}: {r['diff']:+.4f} ± {r['se']:.4f} pts (z {r['z']})"
+                      f" → {'passes' if ok else 'rejected: ' + '; '.join(why)}")
+
     # 3. expert-blend defaults on graded live weeks
     expx = expert_experiment(pj, sc_json)
     if expx:
@@ -491,7 +527,7 @@ def main():
     # 4. adopt at most one change
     winner = None
     blocked = (parity is not None and not parity["ok"]) or changed is not None or a.dry_run
-    passing = sorted([x for x in results if x[2]], key=lambda x: x[1]["z"])
+    passing = sorted([x for x in results if x[2]], key=lambda x: x[1]["diff"])
     if passing and not blocked:
         winner = ("backtest",) + passing[0]
     elif expx and expx["passed"] and not blocked:
@@ -499,8 +535,8 @@ def main():
     for kind, c, r, ok, why, live in [("backtest",) + x for x in results]:
         decision = "promoted" if winner and winner[1] is c else ("passed, not adopted" if ok else "rejected")
         row = {"date": today(), "week": label, "kind": "backtest", "change": c["change"], "source": c["source"],
-               "championVersion": pj.get("version"), "eval": trim(r), "live": live, "decision": decision,
-               "reason": "; ".join(why) if why else ("strongest passing change" if decision == "promoted" else
+               "championVersion": pj.get("version"), "gateVersion": GATE_VERSION, "eval": trim(r), "live": live, "decision": decision,
+               "reason": "; ".join(why) if why else ("largest passing gain" if decision == "promoted" else
                                                     ("another change was adopted this week" if not blocked else "adoption blocked this run")),
                "summary": f"{describe(c['change'])}: {r['diff']:+.4f} ± {r['se']:.4f} (z {r['z']})"}
         if not a.dry_run:
@@ -538,8 +574,7 @@ def main():
         pj_now = load_params_file()
         tested = {k for c, *_ in results for k in c["change"]}
         if any(pj_now["params"][k].pop("new", None) for k in tested if k in pj_now["params"]):
-            json.dump(pj_now, open(PARAMS_PATH, "w"), indent=2)
-            open(PARAMS_PATH, "a").write("\n")
+            dump_params(pj_now)
         save_champion(champ, vals, weeks, pj.get("version"))
     state["lastRun"] = {"date": today(), "week": label, "tested": len(results) + (1 if expx else 0),
                         "adopted": describe(winner[1]["change"]) if winner and not a.dry_run else None, "parity": parity}

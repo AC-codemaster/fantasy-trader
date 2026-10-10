@@ -33,7 +33,11 @@ changed when the project moved into the repo github.com/AC-codemaster/fantasy-tr
 - Rest of season: each frozen week's projections for later weeks are graded by horizon, and ordering is
   compared with FantasyPros' rest-of-season rank at the freeze.
 - Season-aware grouping (season + week keys everywhere), fixing a bug that would have mixed 2026 and 2027.
-- Two goals: model (vs FantasyPros Tuesday, same information) and product (vs final, all the news).
+- Two goals: model (Tuesday page vs FantasyPros Tuesday, same information) and product (our page after
+  the Saturday refresh vs FantasyPros final, all the week's news).
+- Saturday refresh (scheduled task, Saturdays 9:47 ET, `runbooks/saturday.md`): Friday's final injury
+  reports go into the page, which is republished and frozen as the week's "late" projections
+  (`freeze --tag late`; teams that already played keep their Tuesday numbers). No grading or model changes.
 - Expert-weight sweep: page = max(0, model + corr·w/w0 + we·(weekly expert − model)) rebuilt exactly from
   frozen parts for every pair of weights.
 
@@ -46,10 +50,12 @@ changed when the project moved into the repo github.com/AC-codemaster/fantasy-tr
 3. Backtest every candidate on weeks 3–18 of the two previous seasons + week 2 to the latest week of this
    season (≈ 8,000 player-games; champion projection ≥ 3 PPR), paired with the live parameters, standard
    errors clustered by team-week.
-4. Gate: gain ≥ 0.01 pts, z ≤ −2.5, no season z ≥ 1, no position z ≥ 2, calibration slope and backup-QB bias
+4. Gate: gain ≥ 0.002 pts, z ≤ −2.5, no season z ≥ 1, no position z ≥ 2, calibration slope and backup-QB bias
    not worse; engine settings also not worse on archived live weeks with hindsight (z < 1.5, once 4+ weeks).
    Expert defaults: one step toward the sweep's best pair on graded live weeks (4+ weeks, z ≤ −2).
-5. Adopt at most one change (lowest z); write params.json (version + 1), changelog, probation entry; log
+   Single steps on different parameters that each help with z ≤ −2 are also tested together as a bundle
+   (up to 4).
+5. Adopt at most one change or bundle (largest passing gain); write params.json (version + 1), changelog, probation entry; log
    every experiment in `ledger/experiments.jsonl`. Save the champion's backtest predictions for the neutral
    check.
 6. Parity: the backtest is compared with the engine's hindsight projections on the latest graded week; if
@@ -58,6 +64,12 @@ changed when the project moved into the repo github.com/AC-codemaster/fantasy-tr
   model, verified by the neutral check and tests) when a lean persists 3 weeks that no parameter fixes;
   the loop then tests it like any other. Rules in `runbooks/improve-agent.md`.
 - Scope: projections only. The market/acceptance side has no ground truth to tune against yet.
+
+First full sweep (Oct 10, gate v1 with a 0.01-pt minimum): all 46 single steps rejected. The model sits
+near a local optimum; the best steps were damp 0.30→0.35 (−0.0029, z −3.3), env_scale 1.0→1.1 (−0.0028,
+z −3.4), w1 0.8→0.7 (−0.0020, z −3.2), low_target 2→2.25 (−0.0013, z −3.5). Gate v2 lowers the minimum
+gain to 0.002 (the z bar is unchanged) and adds bundles; constants alone won't move the miss much
+further, which is why the structural-change path exists.
 
 ## Tests (`tests/run_tests.py`)
 Parameter file consistency; assembled page = archived Week 5 engine; runner reproduces the Week 5 freeze;

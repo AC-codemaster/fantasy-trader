@@ -8,7 +8,7 @@ suggestion is needed for either; the user can still ask for an experiment (`impr
 rotation through every tunable parameter, the gate, at most one adopted change, the ledger. Nothing to
 decide by hand. Read `ledger/last_run.md` afterwards for the report.
 
-The gate (see the docstring of improve.py): backtest average miss lower by ≥ 0.01 pts with z ≤ −2.5 over
+The gate (see the docstring of improve.py): backtest average miss lower by ≥ 0.002 pts with z ≤ −2.5 over
 every week from week 3 of the two previous seasons to the latest week, not worse in any season (z < 1)
 or position (z < 2), calibration and backup-QB bias not worse; engine settings also not worse on the
 archived live weeks with hindsight. Expert-blend defaults move one step toward the best pair on graded

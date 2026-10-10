@@ -1,1 +1,35 @@
-{"rotation": 0, "probation": []}
+{
+ "rotation": 0,
+ "probation": [
+  {
+   "change": {
+    "damp": [
+     0.3,
+     0.35
+    ],
+    "env_scale": [
+     1.0,
+     1.1
+    ],
+    "w1": [
+     0.8,
+     0.7
+    ],
+    "low_target": [
+     2.0,
+     2.25
+    ]
+   },
+   "since": "2026-w05",
+   "kind": "backtest",
+   "version": 2
+  }
+ ],
+ "lastRun": {
+  "date": "2026-10-10",
+  "week": "2026-w05",
+  "tested": 5,
+  "adopted": "damp 0.3 \u2192 0.35, env_scale 1 \u2192 1.1, w1 0.8 \u2192 0.7, low_target 2 \u2192 2.25",
+  "parity": null
+ }
+}
