@@ -246,11 +246,11 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
       <p class="lede">Bold numbers are ours. Ranges are 95% intervals; a verdict needs the whole interval on one side of zero. Fantasy-relevant players who played, PPR scoring.</p>
       <div class="grid2">
         ${vsCard("Against FantasyPros, Tuesday", "Their first rankings of the week: the same information we froze with. This measures the model itself.", c.page_vs_early)}
-        ${vsCard("Against FantasyPros, final", "Their last consensus before each kickoff, with the whole week's news. A Tuesday freeze can only beat this with late-week updates.", c.page_vs_final)}
+        ${vsCard("Against FantasyPros, final", "Their last consensus before each kickoff, with the whole week's news, against our page after the Saturday refresh.", c.late_vs_final || c.page_vs_final)}
       </div>
       <div class="grid2">
         ${goalBox(G.model, "Model goal", `Beat FantasyPros' Tuesday consensus by at least ${(G.model || {}).maeTargetPct || 3}% in average miss with 95% confidence, and make more right start/sit calls, over at least ${(G.model || {}).needWeeks || 6} graded weeks.`)}
-        ${goalBox(G.product, "Product goal", "The same bar against FantasyPros' final consensus, which has all the week's injury news.")}
+        ${goalBox(G.product, "Product goal", "Our page after the Saturday refresh (Friday's final injury reports) against FantasyPros' final consensus, which has all the week's injury news. Same bar.")}
       </div>
       ${news ? `<p class="lede">Knowing who would play changes our average miss by <b>${sgn(news.diff)}</b> points (${f(news.a)} with hindsight vs ${f(news.b)} on Tuesday): that part of the miss is news after Tuesday, not the model.</p>` : ""}
     </section>`;
@@ -352,7 +352,7 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
       <p class="lede">“Actual − proj” above zero means projections ran low. Start/sit % counts same-position pairs within ${o.close || 12} consensus ranks of each other that were ordered right.</p>
       <div class="box tablewrap"><table>
         <thead><tr><th>Source</th><th class="n">Players</th><th class="n">Avg miss</th><th class="n">Actual − proj</th><th class="n">RMSE</th><th class="n">r</th><th class="n">Rank corr</th><th class="n">Start/sit %</th></tr></thead>
-        <tbody>${["page", "hind", "model", "fp_early", "fp_final"].map((k) => row(k, c.rel[k] || {})).join("")}</tbody></table></div>
+        <tbody>${["page", "late", "hind", "model", "fp_early", "fp_final"].map((k) => row(k, c.rel[k] || {})).join("")}</tbody></table></div>
       <div class="box tablewrap"><h3 style="margin-bottom:6px">By position</h3><table>
         <thead><tr><th>Pos</th><th class="n">Players</th><th class="n">Our miss</th><th class="n">FP Tue</th><th class="n">FP final</th><th class="n">Our start/sit %</th><th class="n">FP final start/sit %</th></tr></thead>
         <tbody>${pos}</tbody></table></div>
