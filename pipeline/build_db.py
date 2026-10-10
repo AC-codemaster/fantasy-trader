@@ -88,11 +88,12 @@ def fetch():
         sh(f"GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/dynastyprocess/data {DP_DIR}")
     for f in ("db_fpecr_latest.csv", "fp_latest_weekly.csv", "db_playerids.csv"):
         sh(f"cp {DP_DIR}/files/{f} .")
+    # parquet support: newer pyarrow releases break pandas' parquet reader, so check in a child process
+    # and fall back to a compatible pyarrow (installed before this process imports it)
+    chk = f"import pandas as pd; pd.read_parquet('{DP_DIR}/files/db_fpecr.parquet', columns=['scrape_date'])"
+    if subprocess.run([sys.executable, "-c", chk], capture_output=True).returncode != 0:
+        sh('pip install -q --break-system-packages "pyarrow<21"')
     if not os.path.exists("fp_preseason.csv"):
-        try:
-            import pyarrow  # noqa: F401
-        except ImportError:
-            sh("pip install -q --break-system-packages pyarrow")
         e = pd.read_parquet(f"{DP_DIR}/files/db_fpecr.parquet")
         e["scrape_date"] = e.scrape_date.astype(str)
         c = e[(e.fp_page == "/nfl/rankings/ppr-cheatsheets.php") & (e.scrape_date < f"{SEASON}-09-08") & (e.scrape_date >= f"{SEASON}-07-01")]

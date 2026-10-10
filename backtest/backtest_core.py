@@ -5,6 +5,8 @@ season S it uses only data from before W, then splits each team's pools among th
 actually played in W ("oracle availability"), so it measures the formula rather than injury news.
 Variants are switched on through a params dict.
 """
+import os
+
 import numpy as np
 import pandas as pd
 
@@ -123,7 +125,7 @@ class Season:
         self.games = g[(g.season == S) & (g.game_type == "REG")].copy()
         self._dc = None
         sn = pd.read_csv(f"snaps{str(S)[2:]}.csv", low_memory=False)
-        ids = pd.read_csv("../db_playerids.csv", low_memory=False)
+        ids = pd.read_csv("db_playerids.csv" if os.path.exists("db_playerids.csv") else "../db_playerids.csv", low_memory=False)
         pfr2g = ids.dropna(subset=["pfr_id", "gsis_id"]).drop_duplicates("pfr_id").set_index("pfr_id").gsis_id.to_dict()
         sn = sn[sn.game_type == "REG"] if "game_type" in sn else sn
         sn = sn.assign(gsis=sn.pfr_player_id.map(pfr2g)).dropna(subset=["gsis"])

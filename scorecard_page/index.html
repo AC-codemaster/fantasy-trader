@@ -185,11 +185,14 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
     if (graded) {
       parts.push(weekly(o));
       parts.push(sources(o, L));
+      parts.push(rosSection(o));
       parts.push(diagnostics(o));
       parts.push(volume(o));
+      parts.push(expertSection(o));
       parts.push(candidates(o));
       parts.push(misses(o));
     }
+    parts.push(improvementSection(o));
     parts.push(method(o));
     $app.innerHTML = parts.join("");
     if (graded) drawChart(o);
@@ -222,25 +225,34 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
       return `<section><h2>Where we stand</h2>
         <div class="empty">No week has been graded yet. The first frozen week is graded the Tuesday after its games, and this page fills in then.</div></section>`;
     }
-    const c = o.cumulative, g = o.goal || {};
-    const wk = Math.min(1, (g.weeks || 0) / (g.needWeeks || 6));
-    const gap = g.maeGapPct, gapW = gap == null ? 0 : Math.max(0, Math.min(1, gap / ((g.maeTargetPct || 3) * 2)));
-    return `<section>
-      <h2>Where we stand</h2>
-      <p class="lede">Bold numbers are ours. Ranges are 95% intervals; a verdict needs the whole interval on one side of zero. Fantasy-relevant players who played, PPR scoring.</p>
-      <div class="grid2">
-        ${vsCard("Against FantasyPros, final", "Their last consensus before each kickoff, with the whole week's news. The bar for “better than any public site”.", c.page_vs_final)}
-        ${vsCard("Against FantasyPros, Tuesday", "Their first rankings of the week: the same information we froze with. Measures the model itself.", c.page_vs_early)}
-      </div>
-      <div class="box goal">
-        <div class="vs-head"><h3>Goal: considerably more accurate</h3><span class="pill ${g.met ? "ahead" : "early"}">${g.met ? "Met" : "Not yet"}</span></div>
-        <p class="lede" style="font-size:13.5px">Beat FantasyPros' final consensus by at least ${g.maeTargetPct || 3}% in average miss with 95% confidence, and make more right start/sit calls, over at least ${g.needWeeks || 6} graded weeks.</p>
+    const c = o.cumulative, G = o.goal || {};
+    const goalBox = (g, title, sub) => {
+      g = g || {};
+      const wk = Math.min(1, (g.weeks || 0) / (g.needWeeks || 6));
+      const gap = g.maeGapPct, gapW = gap == null ? 0 : Math.max(0, Math.min(1, gap / ((g.maeTargetPct || 3) * 2)));
+      return `<div class="box goal">
+        <div class="vs-head"><h3>${title}</h3><span class="pill ${g.met ? "ahead" : "early"}">${g.met ? "Met" : "Not yet"}</span></div>
+        <p class="lede" style="font-size:13.5px">${sub}</p>
         <div class="goal-bars">
           <div><div class="label">Graded weeks</div><div class="meter"><i style="width:${(wk * 100).toFixed(0)}%"></i></div><div class="meter-note">${g.weeks || 0} of ${g.needWeeks || 6}</div></div>
           <div><div class="label">Average-miss lead</div><div class="meter"><i style="width:${(gapW * 100).toFixed(0)}%"></i></div><div class="meter-note">${gap == null ? "–" : sgn(gap, 1) + "%"} vs a ${g.maeTargetPct || 3}% target${g.maeSig ? " · significant" : ""}</div></div>
           <div><div class="label">Start/sit lead</div><div class="meter"><i style="width:${g.pairsGap == null ? 0 : Math.max(0, Math.min(100, g.pairsGap * 10)).toFixed(0)}%"></i></div><div class="meter-note">${g.pairsGap == null ? "–" : sgn(g.pairsGap, 1) + " points"}${g.pairsSig ? " · significant" : ""}</div></div>
         </div>
+      </div>`;
+    };
+    const news = c.hind_vs_page && c.hind_vs_page.mae;
+    return `<section>
+      <h2>Where we stand</h2>
+      <p class="lede">Bold numbers are ours. Ranges are 95% intervals; a verdict needs the whole interval on one side of zero. Fantasy-relevant players who played, PPR scoring.</p>
+      <div class="grid2">
+        ${vsCard("Against FantasyPros, Tuesday", "Their first rankings of the week: the same information we froze with. This measures the model itself.", c.page_vs_early)}
+        ${vsCard("Against FantasyPros, final", "Their last consensus before each kickoff, with the whole week's news. A Tuesday freeze can only beat this with late-week updates.", c.page_vs_final)}
       </div>
+      <div class="grid2">
+        ${goalBox(G.model, "Model goal", `Beat FantasyPros' Tuesday consensus by at least ${(G.model || {}).maeTargetPct || 3}% in average miss with 95% confidence, and make more right start/sit calls, over at least ${(G.model || {}).needWeeks || 6} graded weeks.`)}
+        ${goalBox(G.product, "Product goal", "The same bar against FantasyPros' final consensus, which has all the week's injury news.")}
+      </div>
+      ${news ? `<p class="lede">Knowing who would play changes our average miss by <b>${sgn(news.diff)}</b> points (${f(news.a)} with hindsight vs ${f(news.b)} on Tuesday): that part of the miss is news after Tuesday, not the model.</p>` : ""}
     </section>`;
   }
 
@@ -261,8 +273,8 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
   function weekly(o) {
     const rows = o.weeks.map((w) => {
       const M = w.metrics, p = (w.vsFinal && w.vsFinal.pairs) || {};
-      return `<tr><td>Week ${w.week}${w.status !== "final" ? ' <span class="note-tag">partial</span>' : ""}</td>
-        <td class="n">${f(M.page.mae)}</td><td class="n">${f(M.model.mae)}</td><td class="n">${f(M.fp_early.mae)}</td><td class="n">${f(M.fp_final.mae)}</td>
+      return `<tr><td>${w.season} wk ${w.week}${w.status !== "final" ? ' <span class="note-tag">partial</span>' : ""}</td>
+        <td class="n">${f(M.page.mae)}</td><td class="n">${f((M.hind || {}).mae)}</td><td class="n">${f(M.model.mae)}</td><td class="n">${f(M.fp_early.mae)}</td><td class="n">${f(M.fp_final.mae)}</td>
         <td class="n">${f(p.a, 1)} / ${f(p.b, 1)}</td><td class="n">${w.nRel}</td></tr>`;
     }).join("");
     return `<section>
@@ -277,7 +289,7 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
         <div class="chart" id="chart" role="img" aria-label="Average miss per week: our page vs FantasyPros"></div>
       </div>
       <div class="box tablewrap"><table>
-        <thead><tr><th>Week</th><th class="n">Our page</th><th class="n">Model only</th><th class="n">FP Tue</th><th class="n">FP final</th><th class="n">Start/sit % us / FP final</th><th class="n">Players</th></tr></thead>
+        <thead><tr><th>Week</th><th class="n">Our page</th><th class="n">With hindsight</th><th class="n">Model only</th><th class="n">FP Tue</th><th class="n">FP final</th><th class="n">Start/sit % us / FP final</th><th class="n">Players</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
     </section>`;
   }
@@ -340,7 +352,7 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
       <p class="lede">“Actual − proj” above zero means projections ran low. Start/sit % counts same-position pairs within ${o.close || 12} consensus ranks of each other that were ordered right.</p>
       <div class="box tablewrap"><table>
         <thead><tr><th>Source</th><th class="n">Players</th><th class="n">Avg miss</th><th class="n">Actual − proj</th><th class="n">RMSE</th><th class="n">r</th><th class="n">Rank corr</th><th class="n">Start/sit %</th></tr></thead>
-        <tbody>${["page", "model", "fp_early", "fp_final"].map((k) => row(k, c.rel[k] || {})).join("")}</tbody></table></div>
+        <tbody>${["page", "hind", "model", "fp_early", "fp_final"].map((k) => row(k, c.rel[k] || {})).join("")}</tbody></table></div>
       <div class="box tablewrap"><h3 style="margin-bottom:6px">By position</h3><table>
         <thead><tr><th>Pos</th><th class="n">Players</th><th class="n">Our miss</th><th class="n">FP Tue</th><th class="n">FP final</th><th class="n">Our start/sit %</th><th class="n">FP final start/sit %</th></tr></thead>
         <tbody>${pos}</tbody></table></div>
@@ -363,7 +375,7 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
     };
     return `<section>
       <h2>Where our misses lean</h2>
-      <p class="lede">Average of actual − our projection, by position and situation. Right of the center line = we projected too low. A group gets “Check” when the lean is at least 1.5 points, 2.5 standard errors from zero, with 25+ players (60+ for a position).</p>
+      <p class="lede">Average of actual − our projection (${esc(o.diagnostics.basis || "")}: rerun with who actually played, so news after Tuesday doesn't count against the model), by position and situation. Right of the center line = we projected too low. A group gets “Check” when the lean is at least 1.5 points, 2.5 standard errors from zero, with 25+ players (60+ for a position).</p>
       <div class="box">
         <div class="diag-key"><span><i style="width:16px;height:8px;background:var(--muted);border-radius:2px"></i>our lean</span><span><i style="width:16px;height:2px;background:var(--ink);opacity:.35"></i>95% range</span><span><i style="width:10px;height:10px;border:2px solid var(--fp);border-radius:50%"></i>FantasyPros final, same players</span><span>scale ± ${span.toFixed(1)} pts</span></div>
         <div class="diag">${rows.map(drow).join("")}</div>
@@ -394,9 +406,9 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
   function candidates(o) {
     const c = o.candidates || [];
     return `<section>
-      <h2>Changes worth testing</h2>
-      <p class="lede">Raised automatically when the evidence clears the thresholds. Each one gets backtested on 2024–26 before it goes into the model.</p>
-      ${c.length ? `<ul class="cands">${c.map((x) => `<li><b>${esc(x.area)}</b>: ${esc(x.evidence)}. <span class="muted">Idea: ${esc(x.idea)}.</span></li>`).join("")}</ul>`
+      <h2>Leans the improvement loop will test</h2>
+      <p class="lede">Raised automatically when a lean clears the thresholds. Each Tuesday the improvement loop tries the listed parameters first, backtests them on 2024 through this week, and adopts a change only if it passes the gate.</p>
+      ${c.length ? `<ul class="cands">${c.map((x) => `<li><b>${esc(x.area)}</b>: ${esc(x.evidence)}. <span class="muted">Parameters tried: ${esc((x.params || []).join(", ") || x.idea || "none mapped")}.</span></li>`).join("")}</ul>`
         : `<div class="empty">Nothing yet. Leans have to hold up over several graded weeks before they count as evidence.</div>`}
     </section>`;
   }
@@ -406,9 +418,54 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
     return `<section>
       <h2>Biggest misses, week ${m.week}</h2>
       <div class="box tablewrap"><table>
-        <thead><tr><th>Player</th><th class="n">Ours</th><th class="n">FP final</th><th class="n">Actual</th><th class="n">Opps proj → actual</th><th>Situation</th></tr></thead>
-        <tbody>${m.rows.map((r) => `<tr><td><b>${esc(r.name)}</b> <span class="sub" style="display:inline">${r.pos} ${esc(r.team)}</span></td><td class="n">${f(r.page, 1)}</td><td class="n">${f(r.fp, 1)}</td><td class="n">${f(r.act, 1)}</td><td class="n">${esc(r.opp)}</td><td>${(r.notes || []).map((n) => `<span class="note-tag">${esc(n)}</span>`).join("")}</td></tr>`).join("")}</tbody>
+        <thead><tr><th>Player</th><th class="n">Ours</th><th class="n">Hindsight</th><th class="n">FP final</th><th class="n">Actual</th><th class="n">Opps proj → actual</th><th>Situation</th></tr></thead>
+        <tbody>${m.rows.map((r) => `<tr><td><b>${esc(r.name)}</b> <span class="sub" style="display:inline">${r.pos} ${esc(r.team)}</span></td><td class="n">${f(r.page, 1)}</td><td class="n">${f(r.hind, 1)}</td><td class="n">${f(r.fp, 1)}</td><td class="n">${f(r.act, 1)}</td><td class="n">${esc(r.opp)}</td><td>${(r.notes || []).map((n) => `<span class="note-tag">${esc(n)}</span>`).join("")}</td></tr>`).join("")}</tbody>
       </table></div>
+    </section>`;
+  }
+
+  function rosSection(o) {
+    const r = o.ros;
+    if (!r || !(r.byH || []).length) return "";
+    const rows = r.byH.map((x) => `<tr><td>${x.h === 0 ? "This week" : x.h + " ahead"}</td><td class="n">${x.n}</td><td class="n">${f(x.mae)}</td><td class="n">${sgn(x.bias)}</td><td class="n">${f(x.rhoUs, 3)}</td><td class="n">${f(x.rhoFpRos, 3)}</td></tr>`).join("");
+    const rm = r.rosMean;
+    return `<section>
+      <h2>Rest of season</h2>
+      <p class="lede">Trade values run on the whole rest of the season, so each frozen week's projections for later weeks are graded too, on the weeks a player played. Rank correlation is within position; FantasyPros' benchmark is their rest-of-season rank at the freeze.</p>
+      <div class="box tablewrap"><table>
+        <thead><tr><th>Weeks ahead</th><th class="n">Player-weeks</th><th class="n">Avg miss</th><th class="n">Actual − proj</th><th class="n">Rank corr ours</th><th class="n">FP ROS rank</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+        ${rm ? `<p class="lede" style="font-size:13.5px;margin-top:8px">Rest-of-season average so far (${rm.n} player-freezes with 3+ games): miss ${f(rm.mae)}, rank correlation ours ${f(rm.rhoUs, 3)} vs FantasyPros ${f(rm.rhoFpRos, 3)}.</p>` : ""}
+      </div>
+    </section>`;
+  }
+
+  function expertSection(o) {
+    const e = o.expertSweep;
+    if (!e) return "";
+    return `<section>
+      <h2>Expert weights</h2>
+      <p class="lede">This week's projection is rebuilt exactly from its frozen parts for every pair of expert weights (rest-of-season consensus, weekly ranks), on Tuesday's information. The improvement loop moves the defaults one step at a time toward the best pair once 4+ graded weeks back it.</p>
+      <div class="box"><div class="vs-rows">
+        <div class="vs-row"><div class="what">Current defaults<small>${(e.current.expertWeight * 100).toFixed(0)}% / ${(e.current.weeklyExpert * 100).toFixed(0)}%</small></div><div class="vals"><b>${f(e.current.mae, 3)}</b></div><div></div></div>
+        <div class="vs-row"><div class="what">Best pair so far<small>${(e.best.expertWeight * 100).toFixed(0)}% / ${(e.best.weeklyExpert * 100).toFixed(0)}%</small></div><div class="vals">${f(e.best.mae, 3)}</div><div></div>
+          <div class="diff">${sgn(e.diff, 3)} ± ${f(e.se != null ? 1.96 * e.se : null, 3)} · ${e.n} players, ${e.weeks} week${e.weeks === 1 ? "" : "s"}</div></div>
+      </div></div>
+    </section>`;
+  }
+
+  function improvementSection(o) {
+    const im = o.improvement || {};
+    const rec = im.recent || [];
+    const prob = im.probation || [];
+    const tag = (d) => d === "promoted" ? "ahead" : d === "reverted" ? "behind" : d === "kept" ? "ahead" : d === "on probation" ? "flag" : "early";
+    return `<section>
+      <h2>Improvement loop</h2>
+      <p class="lede">Every Tuesday, after grading, the model tests parameter changes against 2024 through the latest week and adopts at most one that clearly lowers the average miss. Adopted changes stay on probation and are undone if later weeks don't back them up.${im.paramsVersion != null ? ` Live parameters: version ${im.paramsVersion}${im.nTested != null ? ` · ${im.nTested} changes tested, ${im.nPromoted || 0} adopted, ${im.nReverted || 0} reverted` : ""}.` : ""}</p>
+      ${prob.length ? `<div class="box"><div class="label">On probation</div><ul class="prose" style="margin:6px 0 0;padding-left:18px">${prob.map((p) => `<li>${esc(Object.entries(p.change).map(([k, v]) => `${k} ${v[0]} → ${v[1]}`).join(", "))} since ${esc(p.since)}</li>`).join("")}</ul></div>` : ""}
+      ${rec.length ? `<div class="box tablewrap"><table class="mini"><thead><tr><th>Date</th><th>Change</th><th>Why tried</th><th>Result</th><th></th></tr></thead><tbody>
+        ${rec.slice(0, 15).map((r) => `<tr><td class="num">${esc(r.date)}</td><td>${esc(r.change ? Object.entries(r.change).map(([k, v]) => `${k} ${v[0]} → ${v[1]}`).join(", ") : "")}</td><td>${esc(r.source || "")}</td><td>${esc(r.summary || r.reason || "")}</td><td><span class="pill ${tag(r.decision)}">${esc(r.decision || "")}</span></td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="empty">No experiments logged yet. The first run is the next Tuesday refresh.</div>`}
     </section>`;
   }
 
@@ -417,7 +474,8 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
     return `<section>
       <h2>How it's graded</h2>
       <div class="prose">
-        <p><b>Freeze.</b> Right after the Tuesday data refresh, the weekly run loads the published Fantasy Trader page and runs its own engine with default settings (12 teams, PPR). Every player's projection for the coming week is saved with its parts: carries, targets, attempts, yards, touchdowns, plus the situation flags shown above. A frozen week is never edited.</p>
+        <p><b>Freeze.</b> Right after the Tuesday data refresh, the weekly run loads the published Fantasy Trader page and runs its own engine with default settings (12 teams, PPR). Every player's projection for the coming week and every later week is saved with its parts, and so are the inputs the page ran on, so any later version of the model can be replayed on the same week. A frozen week is never edited.</p>
+        <p><b>Hindsight.</b> After the games, the same model is rerun on the same inputs, told who actually played. The gap between that and Tuesday's projection is news; what's left is the model's own error, which is what the diagnostics and the improvement loop work on.</p>
         <p><b>Grade.</b> The next Tuesday, after the games, each projection is compared with the player's real stat line from nflverse. Only players who took an offensive snap count, so a late scratch isn't held against anyone. The main set is fantasy-relevant players: the top ${n.QB} QBs, ${n.RB} RBs, ${n.WR} WRs and ${n.TE} TEs by our projection or by FantasyPros.</p>
         <p><b>Benchmark.</b> FantasyPros' weekly expert consensus pools rankings from dozens of public sites. Its rank and projected points come from DynastyProcess's twice-daily snapshots: the first snapshot of the week (Tuesday, the same information we had) and the last one before each player's kickoff (final, with all the week's injury news).</p>
         <p><b>Metrics.</b> Average miss is the mean absolute difference in PPR points. Start/sit calls are same-position pairs within ${o.close || 12} consensus ranks of each other; a source gets the call right when it ranked the higher scorer first. Intervals account for players in the same game moving together.</p>
