@@ -1,0 +1,249 @@
+{
+ "version": 2,
+ "updated": "2026-10-10",
+ "note": "Tuned model constants. Values here are the live model. The weekly improvement loop (improve/improve.py) proposes changes, tests them, and edits this file only when a change passes the gate; every edit is logged in ledger/changelog.md and ledger/experiments.jsonl. Layer says where a value is used: builder = pipeline/build_db.py (and backtest/backtest_core.py), engine = engine/engine.js. Eval says how a change is tested: backtest = multi-season replay with known availability; live = replay of archived weekly inputs (needs enough graded weeks).",
+ "params": {
+  "prior_games": {
+   "value": 3.0,
+   "min": 1.0,
+   "max": 8.0,
+   "step": 0.5,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Games of weight behind last season's usage share"
+  },
+  "prior_moved": {
+   "value": 1.5,
+   "min": 0.5,
+   "max": 4.0,
+   "step": 0.25,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Same, for a player who changed teams"
+  },
+  "vet_prior": {
+   "value": 0.6,
+   "min": 0.3,
+   "max": 1.0,
+   "step": 0.1,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Multiplier on prior weight and past-season efficiency for veterans (RB 28+, WR/TE 30+, QB 35+)"
+  },
+  "team_prior": {
+   "value": 3.0,
+   "min": 1.0,
+   "max": 8.0,
+   "step": 0.5,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Games of league-average volume behind each team's pool size"
+  },
+  "decay": {
+   "value": 0.9,
+   "min": 0.7,
+   "max": 1.0,
+   "step": 0.025,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Per-week weight decay in this season's share fit"
+  },
+  "blend2": {
+   "value": 0.5,
+   "min": 0.0,
+   "max": 1.0,
+   "step": 0.1,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Weight of the season before last in the usage prior when last season is a full sample"
+  },
+  "w1": {
+   "value": 0.7,
+   "min": 0.3,
+   "max": 1.2,
+   "step": 0.1,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Weight of last season's opportunities in efficiency"
+  },
+  "w2": {
+   "value": 0.4,
+   "min": 0.0,
+   "max": 0.8,
+   "step": 0.1,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Weight of the season before last in efficiency"
+  },
+  "low_target": {
+   "value": 2.25,
+   "min": 0.5,
+   "max": 4.0,
+   "step": 0.25,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Scale on opportunities needed before efficiency shrinks to the full-league rate instead of the low-volume rate"
+  },
+  "K_ypa": {
+   "value": 150,
+   "min": 40,
+   "max": 600,
+   "mult": 1.25,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Shrinkage (attempts) for yards per attempt"
+  },
+  "K_ptd": {
+   "value": 250,
+   "min": 60,
+   "max": 1000,
+   "mult": 1.25,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Shrinkage (attempts) for passing TD rate"
+  },
+  "K_int": {
+   "value": 300,
+   "min": 75,
+   "max": 1200,
+   "mult": 1.25,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Shrinkage (attempts) for interception rate"
+  },
+  "K_ypc": {
+   "value": 100,
+   "min": 25,
+   "max": 400,
+   "mult": 1.25,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Shrinkage (carries) for yards per carry"
+  },
+  "K_rtd": {
+   "value": 150,
+   "min": 40,
+   "max": 600,
+   "mult": 1.25,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Shrinkage (carries) for rushing TD rate"
+  },
+  "K_cr": {
+   "value": 40,
+   "min": 10,
+   "max": 160,
+   "mult": 1.25,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Shrinkage (targets) for catch rate"
+  },
+  "K_ypt": {
+   "value": 60,
+   "min": 15,
+   "max": 240,
+   "mult": 1.25,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Shrinkage (targets) for yards per target"
+  },
+  "K_rectd": {
+   "value": 120,
+   "min": 30,
+   "max": 480,
+   "mult": 1.25,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Shrinkage (targets) for receiving TD rate"
+  },
+  "K_cpa": {
+   "value": 150,
+   "min": 40,
+   "max": 600,
+   "mult": 1.25,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Shrinkage for QB carries per attempt"
+  },
+  "K_fl": {
+   "value": 250,
+   "min": 60,
+   "max": 1000,
+   "mult": 1.25,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Shrinkage for fumbles lost per opportunity"
+  },
+  "K_two": {
+   "value": 400,
+   "min": 100,
+   "max": 1600,
+   "mult": 1.25,
+   "layer": "builder",
+   "eval": "backtest",
+   "desc": "Shrinkage for 2-point conversions per opportunity"
+  },
+  "env_shrink": {
+   "value": 0.74,
+   "min": 0.3,
+   "max": 1.0,
+   "step": 0.05,
+   "layer": "builder",
+   "eval": "none",
+   "tunable": false,
+   "desc": "Shrink on game environment for weeks without a Vegas line (fixed: the replays only see real lines)"
+  },
+  "damp": {
+   "value": 0.35,
+   "min": 0.0,
+   "max": 0.7,
+   "step": 0.05,
+   "layer": "engine",
+   "eval": "backtest",
+   "desc": "Share of a short-term absentee's work that goes to depth players we don't model"
+  },
+  "ret_disc": {
+   "value": 0.85,
+   "min": 0.6,
+   "max": 1.0,
+   "step": 0.025,
+   "layer": "engine",
+   "eval": "backtest",
+   "desc": "Share weight in a player's first game back"
+  },
+  "env_scale": {
+   "value": 1.1,
+   "min": 0.0,
+   "max": 1.6,
+   "step": 0.1,
+   "layer": "engine",
+   "eval": "backtest",
+   "desc": "Scale on all game-environment (Vegas line) elasticities"
+  },
+  "expertWeight": {
+   "value": 0.2,
+   "min": 0.0,
+   "max": 0.8,
+   "step": 0.05,
+   "layer": "engine",
+   "eval": "live",
+   "desc": "Default weight on FantasyPros rest-of-season consensus"
+  },
+  "weeklyExpert": {
+   "value": 0.25,
+   "min": 0.0,
+   "max": 0.8,
+   "step": 0.05,
+   "layer": "engine",
+   "eval": "live",
+   "desc": "Default weight on FantasyPros weekly ranks, current week only"
+  }
+ },
+ "engine_params_in_page": {
+  "damp": 0.35,
+  "ret_disc": 0.85,
+  "env_scale": 1.1,
+  "expertWeight": 0.2,
+  "weeklyExpert": 0.25
+ }
+}
