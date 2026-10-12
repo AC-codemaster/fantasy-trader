@@ -47,7 +47,7 @@ def backtest_params(vals):
     return dict(prior_games=vals["prior_games"], prior_moved=vals["prior_moved"], vet_prior=vals["vet_prior"],
                 team_prior=vals["team_prior"], w1=vals["w1"], w2=vals["w2"], decay=vals["decay"], K=K,
                 env=env if g > 0 else None, low_target=vals["low_target"], damp=vals["damp"],
-                ret_disc=vals["ret_disc"], blend2=vals["blend2"])
+                ret_disc=vals["ret_disc"], blend2=vals["blend2"], rookie_prior=float(vals.get("rookie_prior", 0.0)))
 
 
 def esc_script(text, js=False):

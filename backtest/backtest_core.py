@@ -25,7 +25,40 @@ QB_PRIOR = {1: 0.95, 2: 0.04, 3: 0.01}
 CUR_OK = ("ACT", "INA", "RES", "EXE")
 BASE = dict(prior_games=3.0, prior_moved=1.5, vet_prior=0.6, team_prior=3.0, w1=0.8, w2=0.4, decay=1.0,
             K=dict(ypa=150, ptd=250, int=300, ypc=100, rtd=150, cr=40, ypt=60, rectd=120, cpa=150, fl=250, two=400),
-            env=None, qb_iters=300, low_target=0.0, damp=0.0, ret_disc=1.0, prior_track=0.0, blend2=0.0)
+            env=None, qb_iters=300, low_target=0.0, damp=0.0, ret_disc=1.0, prior_track=0.0, blend2=0.0, rookie_prior=0.0)
+# rookie prior (same as build_db.py): pseudo-opportunities per unit of rookie_prior at the rookie model's rates
+ROOKIE_OPPS = {"QB": {"attempts": 150}, "RB": {"carries": 60, "targets": 20}, "WR": {"targets": 40}, "TE": {"targets": 30}}
+ROOKIE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "rookie", "predictions.csv")
+
+
+def load_rookies(S, path=None):
+    """{gsis_id: row} of the rookie model's predictions for class S (fitted on earlier classes only)."""
+    path = path or os.environ.get("FT_ROOKIES") or ROOKIE_FILE
+    if not os.path.exists(path):
+        return {}
+    rk = pd.read_csv(path, low_memory=False)
+    return {r.gsis_id: r._asdict() for r in rk[rk.season == S].itertuples(index=False)}
+
+
+def rookie_pseudo(rk, pos, rp, lg):
+    """Pseudo-counts the rookie prior adds to a rookie's efficiency history ({} when off)."""
+    if rp <= 0 or rk is None:
+        return {}
+    n = {k: rp * v for k, v in ROOKIE_OPPS.get(pos, {}).items()}
+    if pos == "QB":
+        a = n.get("attempts", 0.0)
+        qc = a * rk["cpa"]
+        out = {"attempts": a, "passing_yards": a * rk["ypa"], "passing_tds": a * rk["ptd"], "passing_interceptions": a * rk["ipa"],
+               "carries": qc, "rushing_yards": qc * rk["ypc"], "rushing_tds": qc * rk["rtd"]}
+    else:
+        c, t = n.get("carries", 0.0), n.get("targets", 0.0)
+        out = {"carries": c, "rushing_yards": c * rk["ypc"], "rushing_tds": c * rk["rtd"], "targets": t,
+               "receptions": t * rk["cr"], "receiving_yards": t * rk["ypt"], "receiving_tds": t * rk["rctd"]}
+    opp = out.get("carries", 0.0) + out.get("targets", 0.0) + (out.get("attempts", 0.0) if pos == "QB" else 0.0)
+    lg_opp = (lg.loc[pos, "attempts"] + lg.loc[pos, "carries"]) if pos == "QB" else (lg.loc[pos, "carries"] + lg.loc[pos, "targets"])
+    out["fl"] = opp * lg.loc[pos, "fl"] / max(lg_opp, 1)
+    out["two"] = opp * lg.loc[pos, "two"] / max(lg_opp, 1)
+    return out
 
 
 def yoy(pos, age):
@@ -124,6 +157,7 @@ class Season:
         g = pd.read_csv("games.csv", low_memory=False)
         self.games = g[(g.season == S) & (g.game_type == "REG")].copy()
         self._dc = None
+        self._rookies = None
         sn = pd.read_csv(f"snaps{str(S)[2:]}.csv", low_memory=False)
         ids = pd.read_csv("db_playerids.csv" if os.path.exists("db_playerids.csv") else "../db_playerids.csv", low_memory=False)
         pfr2g = ids.dropna(subset=["pfr_id", "gsis_id"]).drop_duplicates("pfr_id").set_index("pfr_id").gsis_id.to_dict()
@@ -220,6 +254,10 @@ class Season:
                 vals = pool_game[c][tm] if tm in pool_game[c].index.get_level_values(0) else pd.Series(dtype=float)
                 team_pool[tm][c] = float((vals.sum() + P["team_prior"] * lg_pool[c]) / (len(vals) + P["team_prior"]))
         qbd = self.qb_depth(W)
+        RP = float(P.get("rookie_prior", 0.0))
+        if RP > 0 and self._rookies is None:
+            self._rookies = load_rookies(S)
+        ROOK = self._rookies if RP > 0 else {}
 
         def prior_share(pid, pos, c):
             age = ages.get(pid)
@@ -266,6 +304,8 @@ class Season:
                     k = prior_strength(pid, pos, tm, c)
                     if v is not None and k > 0:
                         u0[pid], n[pid] = v, k * team_pool[tm][c]
+                    elif RP > 0 and pid in ROOK and ROOK[pid]["sh_" + c] > 0:
+                        u0[pid], n[pid] = ROOK[pid]["sh_" + c], RP * P["prior_games"] * team_pool[tm][c]
                 tot0 = sum(u0.values())
                 if tot0 > 1:
                     u0 = {k_: v / tot0 for k_, v in u0.items()}
@@ -291,13 +331,16 @@ class Season:
             f2 = f1 * yoy(pos, age - 1 if age else None)
             vet = P["vet_prior"] if (age is not None and age >= VET_AGE[pos]) else 1.0
             scaled = {"passing_yards", "passing_tds", "rushing_yards", "rushing_tds", "receiving_yards", "receiving_tds"}
+            rk_add = rookie_pseudo(ROOK.get(pid), pos, RP, lg) if ROOK else {}
 
-            def h(col):
+            def h(col, real=False):
                 x = a[col] if a is not None else 0.0
                 if b is not None:
                     x += P["w1"] * vet * b[col] * (np.sqrt(f1) if col in scaled else 1.0)
                 if c2 is not None:
                     x += P["w2"] * vet * c2[col] * (np.sqrt(f2) if col in scaled else 1.0)
+                if rk_add and not real:
+                    x += rk_add.get(col, 0.0)
                 return x
 
             def sh(num, den, k):
@@ -306,7 +349,7 @@ class Season:
                     key = "RB_rec" if (pos == "RB" and den == "targets") else pos
                     lo = lg_low[key]
                     lr_low = lo[num] / max(lo[den], 1)
-                    w_ = min(1.0, h(den) / (AFULL[key] * P["low_target"]))
+                    w_ = min(1.0, h(den, real=True) / (AFULL[key] * P["low_target"]))
                     lr = lr_low + (lr - lr_low) * w_
                 return (h(num) + k * lr) / (h(den) + k)
 

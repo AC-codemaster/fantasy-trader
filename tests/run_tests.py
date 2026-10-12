@@ -146,6 +146,59 @@ def improvement_gate_behaves():
     assert improve.stepped(pj["params"]["K_cr"], 40, +1) == 50.0
 
 
+@test
+def rookie_lookup_covers_current_class():
+    """Every drafted QB/RB/WR/TE of the current season has a rookie-model prediction (fitted on earlier classes)."""
+    src = open(os.path.join(ROOT, "pipeline", "build_db.py")).read()
+    season = int(re.search(r"^SEASON = (\d{4})", src, re.M).group(1))
+    D = pd.read_csv(os.path.join(ROOT, "data", "rookie", "players.csv"), low_memory=False)
+    R = pd.read_csv(os.path.join(ROOT, "data", "rookie", "predictions.csv"), low_memory=False)
+    cls = D[(D.season == season) & D.pos.isin(["QB", "RB", "WR", "TE"])]
+    assert len(cls) >= 60, f"only {len(cls)} drafted QB/RB/WR/TE in the {season} class"
+    have = set(R[R.season == season].gsis_id)
+    missing = cls[cls.gsis_id.notna() & ~cls.gsis_id.isin(have)]
+    assert not len(missing), f"no rookie prediction for {list(missing.name)[:5]}"
+    assert cls.gsis_id.notna().mean() >= 0.95, "too many drafted players without a gsis id"
+    rr = R[R.season == season]
+    assert (rr.trained_thru < season).all(), "predictions must come from earlier classes only"
+    for c in ("sh_r", "sh_t", "sh_p"):
+        assert rr[c].between(0, 1).all(), c
+
+
+@test
+def rookie_prior_zero_changes_nothing():
+    """rookie_prior = 0 is the old model: no pseudo-counts, same backtest settings, same projections."""
+    import backtest_core as bc
+    pj = load_params_file()
+    vals = values(pj)
+    lg = pd.DataFrame({c: [1000.0] for c in ("attempts", "carries", "targets", "fl", "two")}, index=["RB"])
+    rk = {"sh_r": .3, "sh_t": .05, "sh_p": 0, "ypc": 4.2, "rtd": .03, "cr": .75, "ypt": 6.5, "rctd": .03, "ypa": 0, "ptd": 0, "ipa": 0, "cpa": 0}
+    assert bc.rookie_pseudo(rk, "RB", 0.0, lg) == {}
+    assert bc.rookie_pseudo(rk, "RB", 1.0, lg)["carries"] > 0
+    v0 = {k: v for k, v in vals.items() if k != "rookie_prior"}
+    assert backtest_params(dict(v0, rookie_prior=0.0)) == dict(backtest_params(v0), rookie_prior=0.0)
+    src = open(os.path.join(ROOT, "pipeline", "build_db.py")).read()
+    assert src.count("ROOKIE_PRIOR > 0") >= 2 and "if ROOKIE_PRIOR <= 0 or rk is None" in src, "builder rookie code must be gated"
+    # functional check on the season files when a work folder has them (skipped otherwise)
+    work = os.path.join(ROOT, "work")
+    need = ["s24.csv", "s25.csv", "s26.csv", "r24.csv", "r25.csv", "r26.csv", "snaps26.csv", "dc26.csv", "games.csv", "db_playerids.csv"]
+    if not all(os.path.exists(os.path.join(work, f)) for f in need):
+        print("      (rookie_prior backtest check skipped: no season files in work/)")
+        return
+    cwd = os.getcwd()
+    os.chdir(work)
+    try:
+        S = bc.Season(2026)
+        P = backtest_params(dict(vals, rookie_prior=0.0))
+        a = S.project(3, P)
+        b = S.project(3, {k: v for k, v in P.items() if k != "rookie_prior"})
+        c = S.project(3, dict(P, rookie_prior=1.0))
+    finally:
+        os.chdir(cwd)
+    assert len(a) == len(b) and (a.pred.values == b.pred.values).all(), "rookie_prior 0 changed the backtest"
+    assert (a.pred.values != c.pred.values).any(), "rookie_prior 1 had no effect (lookup broken?)"
+
+
 if __name__ == "__main__":
     sys.path.insert(0, os.path.join(ROOT, "improve"))
     fails = 0
