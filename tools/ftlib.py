@@ -9,10 +9,22 @@ ENGINE_PATH = os.path.join(ROOT, "engine", "engine.js")
 ENGINE_KEYS = ["damp", "ret_disc", "env_scale", "expertWeight", "weeklyExpert"]
 PARAMS_LINE = re.compile(r"^const PARAMS = \{.*\};$", re.M)
 
-# game-environment elasticities (log change per unit of implied-total change x, and per spread point);
-# the same numbers as ENV_K in engine.js
+ANNUAL_PATH = os.path.join(ROOT, "params", "annual.json")
+ENV_K_LINE = re.compile(r"^const ENV_K = \{.*\};$", re.M)
+
+# game-environment elasticities (log change per unit of implied-total change x, and per spread point):
+# params/annual.json env_k (refitted yearly); these literals are version 1, also the fallback in engine.js
 ENV_K = {"att": (0.2378, -0.00353), "pyd": (0.5709, -0.0025), "ptd": (0.6785, -0.00071),
          "car": (-0.0775, 0.00735), "ryd": (0.1785, 0.00615), "rtd": (0.4132, 0.00569)}
+
+
+def load_annual(path=None):
+    p = path or os.environ.get("FT_ANNUAL") or ANNUAL_PATH
+    return json.load(open(p)) if os.path.exists(p) else {}
+
+
+if load_annual().get("env_k"):
+    ENV_K = {k: tuple(v) for k, v in load_annual()["env_k"].items()}
 
 
 def load_params_file(path=None):
@@ -28,20 +40,31 @@ def engine_params(vals):
     return {k: vals[k] for k in ENGINE_KEYS if k in vals}
 
 
-def engine_source(vals=None, src=None):
-    """engine.js with its PARAMS line set from the given values (default: the params file)."""
+def engine_source(vals=None, src=None, env_k=None):
+    """engine.js with its PARAMS line set from the given values (default: the params file) and, for the current
+    engine (src None) or when env_k is given, its ENV_K line from params/annual.json. An archived engine keeps
+    the ENV_K it ran with unless env_k is passed."""
+    current = src is None
     src = src if src is not None else open(ENGINE_PATH).read()
     vals = vals if vals is not None else values(load_params_file())
     line = "const PARAMS = " + json.dumps(engine_params(vals), separators=(",", ":")) + ";"
     assert len(PARAMS_LINE.findall(src)) == 1, "engine.js must have exactly one PARAMS line"
-    return PARAMS_LINE.sub(lambda m: line, src, count=1)
+    out = PARAMS_LINE.sub(lambda m: line, src, count=1)
+    if env_k is None and current:
+        env_k = ENV_K
+    if env_k is not None:
+        assert len(ENV_K_LINE.findall(out)) == 1, "engine.js must have exactly one ENV_K line"
+        kl = "const ENV_K = " + json.dumps({k: list(v) for k, v in env_k.items()}, separators=(",", ":")) + ";"
+        out = ENV_K_LINE.sub(lambda m: kl, out, count=1)
+    return out
 
 
-def backtest_params(vals):
-    """Settings for backtest/backtest_core.py that reproduce the live model with these values."""
+def backtest_params(vals, env_k=None):
+    """Settings for backtest/backtest_core.py that reproduce the live model with these values (env_k: an
+    annual-refit challenger for the game-environment elasticities; default params/annual.json)."""
     g = float(vals.get("env_scale", 1.0))
     env = {"k_usual": 3}
-    for k, (xi, si) in ENV_K.items():
+    for k, (xi, si) in (env_k or ENV_K).items():
         env[k + "_i"], env[k + "_s"] = g * xi, g * si
     K = {k[2:]: float(v) for k, v in vals.items() if k.startswith("K_")}
     return dict(prior_games=vals["prior_games"], prior_moved=vals["prior_moved"], vet_prior=vals["vet_prior"],

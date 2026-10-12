@@ -199,6 +199,49 @@ def rookie_prior_zero_changes_nothing():
     assert (a.pred.values != c.pred.values).any(), "rookie_prior 1 had no effect (lookup broken?)"
 
 
+LEGACY_ANNUAL = {   # the constants hardcoded before Oct 12, 2026 (= params/annual.json version 1)
+    "yoy": {"RB": [[24, 1.04], [25, 1.01], [26, 0.98], [27, 0.95], [28, 0.91], [29, 0.88], [99, 0.85]],
+            "WR": [[23, 1.08], [24, 1.05], [25, 1.03], [26, 1.01], [27, 1.00], [28, 0.98], [29, 0.96], [30, 0.93], [31, 0.90], [99, 0.87]],
+            "TE": [[24, 1.10], [25, 1.06], [26, 1.03], [27, 1.01], [28, 1.00], [29, 0.97], [30, 0.94], [31, 0.91], [99, 0.88]],
+            "QB": [[25, 1.05], [26, 1.03], [27, 1.01], [32, 1.00], [33, 0.98], [34, 0.96], [35, 0.94], [36, 0.92], [99, 0.89]]},
+    "env_k": {"att": [0.2378, -0.00353], "pyd": [0.5709, -0.0025], "ptd": [0.6785, -0.00071], "car": [-0.0775, 0.00735],
+              "ryd": [0.1785, 0.00615], "rtd": [0.4132, 0.00569]},
+    "low_volume": {"lowcut": {"QB": ["attempts", 150], "RB": ["carries", 40], "WR": ["targets", 25], "TE": ["targets", 20], "RB_rec": ["targets", 15]},
+                   "afull": {"QB": 300, "RB": 100, "WR": 60, "TE": 45, "RB_rec": 40}},
+    "faab": {"cut": {"QB": 20, "RB": 50, "WR": 70, "TE": 20}, "n_start": {"QB": 12, "RB": 30, "WR": 40, "TE": 12},
+             "n_waiver": {"QB": 18, "RB": 48, "WR": 64, "TE": 18}},
+}
+
+
+@test
+def annual_constants_shared_and_reproduced():
+    """params/annual.json is what the builder, the backtest and the engine use; version 1 is exactly the old
+    hardcoded numbers, and every later version was adopted by the annual refit (logged in the changelog)."""
+    import backtest_core as bc
+    import ftlib
+    A = json.load(open(os.path.join(ROOT, "params", "annual.json")))
+    for k in LEGACY_ANNUAL:
+        assert k in A, f"annual.json has no {k}"
+    assert bc.YOY == {k: [tuple(x) for x in v] for k, v in A["yoy"].items()}, "backtest YOY differs from annual.json"
+    assert bc.LOWCUT == {k: tuple(v) for k, v in A["low_volume"]["lowcut"].items()} and bc.AFULL == A["low_volume"]["afull"]
+    assert ftlib.ENV_K == {k: tuple(v) for k, v in A["env_k"].items()}, "ftlib ENV_K differs from annual.json"
+    eng = engine_source()
+    m = re.search(r"^const ENV_K = (\{.*\});$", eng, re.M)
+    assert m and json.loads(m.group(1)) == A["env_k"], "the page's engine doesn't carry annual.json's ENV_K"
+    src = open(os.path.join(ROOT, "pipeline", "build_db.py")).read()
+    for k in ('ANNUAL["yoy"]', 'ANNUAL["low_volume"]', 'ANNUAL["faab"]'):
+        assert k in src, f"builder doesn't read {k}"
+    # the fallbacks in the code are version 1
+    m = re.search(r"^const ENV_K = (\{.*\});$", open(os.path.join(ROOT, "engine", "engine.js")).read(), re.M)
+    assert m, "engine.js lost its ENV_K line"
+    if A["version"] == 1:
+        for k, v in LEGACY_ANNUAL.items():
+            assert A[k] == v, f"annual.json version 1 must equal the old constants ({k})"
+    else:
+        log = open(os.path.join(ROOT, "ledger", "changelog.md")).read()
+        assert f"annual constants v{A['version']}" in log, "annual.json changed without an annual-refit changelog entry"
+
+
 if __name__ == "__main__":
     sys.path.insert(0, os.path.join(ROOT, "improve"))
     fails = 0

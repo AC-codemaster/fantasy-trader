@@ -5,6 +5,7 @@ season S it uses only data from before W, then splits each team's pools among th
 actually played in W ("oracle availability"), so it measures the formula rather than injury news.
 Variants are switched on through a params dict.
 """
+import json
 import os
 
 import numpy as np
@@ -20,12 +21,22 @@ YOY = {
     "TE": [(24, 1.10), (25, 1.06), (26, 1.03), (27, 1.01), (28, 1.00), (29, 0.97), (30, 0.94), (31, 0.91), (99, 0.88)],
     "QB": [(25, 1.05), (26, 1.03), (27, 1.01), (32, 1.00), (33, 0.98), (34, 0.96), (35, 0.94), (36, 0.92), (99, 0.89)],
 }
+ANNUAL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "params", "annual.json")
+LOWCUT = {"QB": ("attempts", 150), "RB": ("carries", 40), "WR": ("targets", 25), "TE": ("targets", 20), "RB_rec": ("targets", 15)}
+AFULL = {"QB": 300, "RB": 100, "WR": 60, "TE": 45, "RB_rec": 40}
+if os.path.exists(os.environ.get("FT_ANNUAL") or ANNUAL_FILE):   # yearly-refitted constants (the literals above are version 1)
+    _A = json.load(open(os.environ.get("FT_ANNUAL") or ANNUAL_FILE))
+    YOY = {k: [tuple(x) for x in v] for k, v in _A.get("yoy", {}).items()} or YOY
+    if "low_volume" in _A:
+        LOWCUT = {k: tuple(v) for k, v in _A["low_volume"]["lowcut"].items()}
+        AFULL = dict(_A["low_volume"]["afull"])
 VET_AGE = {"RB": 28, "WR": 30, "TE": 30, "QB": 35}
 QB_PRIOR = {1: 0.95, 2: 0.04, 3: 0.01}
 CUR_OK = ("ACT", "INA", "RES", "EXE")
 BASE = dict(prior_games=3.0, prior_moved=1.5, vet_prior=0.6, team_prior=3.0, w1=0.8, w2=0.4, decay=1.0,
             K=dict(ypa=150, ptd=250, int=300, ypc=100, rtd=150, cr=40, ypt=60, rectd=120, cpa=150, fl=250, two=400),
-            env=None, qb_iters=300, low_target=0.0, damp=0.0, ret_disc=1.0, prior_track=0.0, blend2=0.0, rookie_prior=0.0)
+            env=None, qb_iters=300, low_target=0.0, damp=0.0, ret_disc=1.0, prior_track=0.0, blend2=0.0, rookie_prior=0.0,
+            yoy=None, low_volume=None)   # yoy / low_volume: annual-refit challengers (None = params/annual.json)
 # rookie prior (same as build_db.py): pseudo-opportunities per unit of rookie_prior at the rookie model's rates
 ROOKIE_OPPS = {"QB": {"attempts": 150}, "RB": {"carries": 60, "targets": 20}, "WR": {"targets": 40}, "TE": {"targets": 30}}
 ROOKIE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "rookie", "predictions.csv")
@@ -61,10 +72,10 @@ def rookie_pseudo(rk, pos, rp, lg):
     return out
 
 
-def yoy(pos, age):
+def yoy(pos, age, table=None):
     if age is None or (isinstance(age, float) and np.isnan(age)):
         return 1.0
-    for a, f in YOY[pos]:
+    for a, f in (table or YOY)[pos]:
         if age <= a:
             return f
     return 1.0
@@ -226,19 +237,19 @@ class Season:
         smap = self.smap[S]
         lg = pd.concat([self.st[S - 2], self.st[S - 1], cur]).groupby("position")[COLS].sum()
         # league rates among low-volume players (season totals below a threshold), the shrink target for thin samples
-        LOWCUT = {"QB": ("attempts", 150), "RB": ("carries", 40), "WR": ("targets", 25), "TE": ("targets", 20)}
+        YT = P["yoy"] or YOY
+        LV = P["low_volume"] or {"lowcut": LOWCUT, "afull": AFULL}
+        lowcut = {k: tuple(v) for k, v in LV["lowcut"].items()}
         seas = []
         for y_, d_ in ((S - 2, self.st[S - 2]), (S - 1, self.st[S - 1])):
             seas.append(d_.groupby(["player_id", "position"])[COLS].sum().reset_index())
         allt = pd.concat(seas)
         lg_low = {}
-        for pos_, (col_, cut_) in LOWCUT.items():
+        for key_, (col_, cut_) in lowcut.items():   # RB_rec: RB receiving uses a target cut instead
+            pos_ = "RB" if key_ == "RB_rec" else key_
             x_ = allt[(allt.position == pos_) & (allt[col_] > 0) & (allt[col_] <= cut_)]
-            lg_low[pos_] = x_[COLS].sum()
-        # RB receiving uses a target cut instead
-        x_ = allt[(allt.position == "RB") & (allt.targets > 0) & (allt.targets <= 15)]
-        lg_low["RB_rec"] = x_[COLS].sum()
-        AFULL = {"QB": 300, "RB": 100, "WR": 60, "TE": 45, "RB_rec": 40}
+            lg_low[key_] = x_[COLS].sum()
+        AFULL_ = LV["afull"]
         tc = self._totals(cur) if len(cur) else pd.DataFrame(columns=COLS + ["g"])
         t1, t2 = self.tot[S - 1], self.tot[S - 2]
         pr1, pr2 = self.prior[S - 1], self.prior[S - 2]
@@ -261,8 +272,8 @@ class Season:
 
         def prior_share(pid, pos, c):
             age = ages.get(pid)
-            f1 = yoy(pos, age)
-            f2 = f1 * yoy(pos, age - 1 if age else None)
+            f1 = yoy(pos, age, YT)
+            f2 = f1 * yoy(pos, age - 1 if age else None, YT)
             a1, a2 = pr1.get((c, pid)), pr2.get((c, pid))
             num = den = 0.0
             if a1:
@@ -327,8 +338,8 @@ class Season:
             b = t1.loc[pid] if pid in t1.index else None
             c2 = t2.loc[pid] if pid in t2.index else None
             age = ages.get(pid)
-            f1 = yoy(pos, age)
-            f2 = f1 * yoy(pos, age - 1 if age else None)
+            f1 = yoy(pos, age, YT)
+            f2 = f1 * yoy(pos, age - 1 if age else None, YT)
             vet = P["vet_prior"] if (age is not None and age >= VET_AGE[pos]) else 1.0
             scaled = {"passing_yards", "passing_tds", "rushing_yards", "rushing_tds", "receiving_yards", "receiving_tds"}
             rk_add = rookie_pseudo(ROOK.get(pid), pos, RP, lg) if ROOK else {}
@@ -349,7 +360,7 @@ class Season:
                     key = "RB_rec" if (pos == "RB" and den == "targets") else pos
                     lo = lg_low[key]
                     lr_low = lo[num] / max(lo[den], 1)
-                    w_ = min(1.0, h(den, real=True) / (AFULL[key] * P["low_target"]))
+                    w_ = min(1.0, h(den, real=True) / (AFULL_[key] * P["low_target"]))
                     lr = lr_low + (lr - lr_low) * w_
                 return (h(num) + k * lr) / (h(den) + k)
 

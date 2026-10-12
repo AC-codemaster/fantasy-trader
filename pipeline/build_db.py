@@ -58,6 +58,19 @@ def _load_params():
 PRM, PARAMS_VERSION, PARAMS_PATH = _load_params()
 
 
+def _load_annual():
+    """Yearly-refitted constants from params/annual.json (runbooks/annual-refit.md): $FT_ANNUAL, ./annual.json,
+    ../params/annual.json next to this script; the built-in values below otherwise (= annual.json version 1)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path in (os.environ.get("FT_ANNUAL"), "annual.json", os.path.join(here, "..", "params", "annual.json")):
+        if path and os.path.exists(path):
+            return json.load(open(path))
+    return {}
+
+
+ANNUAL = _load_annual()
+
+
 def prm(key, default):
     return float(PRM.get(key, default))
 
@@ -164,7 +177,11 @@ K = {k_: prm("K_" + k_, v_) for k_, v_ in {"ypa": 150, "ptd": 250, "int": 300, "
 # (backup QBs: 6.4 yards/attempt and a 2.9% TD rate vs 7.3 and 4.8% for starters). The target moves
 # from the low-volume rate to the league rate as his weighted opportunities approach AFULL.
 LOWCUT = {"QB": ("attempts", 150), "RB": ("carries", 40), "WR": ("targets", 25), "TE": ("targets", 20), "RB_rec": ("targets", 15)}
-AFULL = {k_: v_ * prm("low_target", 2.0) for k_, v_ in {"QB": 300, "RB": 100, "WR": 60, "TE": 45, "RB_rec": 40}.items()}  # 2.0 → 600/200/120/90/80
+AFULL0 = {"QB": 300, "RB": 100, "WR": 60, "TE": 45, "RB_rec": 40}
+if "low_volume" in ANNUAL:
+    LOWCUT = {k_: tuple(v_) for k_, v_ in ANNUAL["low_volume"]["lowcut"].items()}
+    AFULL0 = dict(ANNUAL["low_volume"]["afull"])
+AFULL = {k_: v_ * prm("low_target", 2.0) for k_, v_ in AFULL0.items()}  # 2.0 → 600/200/120/90/80
 _seas = pd.concat([s24.groupby(["player_id", "position"])[COLS].sum().reset_index(),
                    s25.groupby(["player_id", "position"])[COLS].sum().reset_index()])
 lg_low = {}
@@ -358,6 +375,8 @@ YOY = {
     "TE": [(24, 1.10), (25, 1.06), (26, 1.03), (27, 1.01), (28, 1.00), (29, 0.97), (30, 0.94), (31, 0.91), (99, 0.88)],
     "QB": [(25, 1.05), (26, 1.03), (27, 1.01), (32, 1.00), (33, 0.98), (34, 0.96), (35, 0.94), (36, 0.92), (99, 0.89)],
 }
+if "yoy" in ANNUAL:   # refitted yearly (params/annual.json); the table above is version 1
+    YOY = {k_: [tuple(x_) for x_ in v_] for k_, v_ in ANNUAL["yoy"].items()}
 VET_AGE = {"RB": 28, "WR": 30, "TE": 30, "QB": 35}   # from here on, last year's data counts less
 VET_PRIOR = prm("vet_prior", 0.6)
 SEASON_START = pd.Timestamp(f"{SEASON}-09-01")
@@ -890,6 +909,8 @@ def breakout_pool(stats, year):
     CUT = {"QB": 20, "RB": 50, "WR": 70, "TE": 20}
     N_START = {"QB": 12, "RB": 30, "WR": 40, "TE": 12}
     N_WAIVER = {"QB": 18, "RB": 48, "WR": 64, "TE": 18}
+    if "faab" in ANNUAL:
+        CUT, N_START, N_WAIVER = ANNUAL["faab"]["cut"], ANNUAL["faab"]["n_start"], ANNUAL["faab"]["n_waiver"]
     out = {}
     for key, col in (("std", "fantasy_points"), ("ppr", "fantasy_points_ppr")):
         g = stats.groupby(["player_id", "position"])[col].agg(["sum", "count"])
@@ -930,7 +951,7 @@ out = {
     "builtAt": pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
     "season": SEASON, "curWeek": CUR_WEEK, "doneWeek": DONE_WEEK, "lastWeek": LAST_WEEK, "rosWeek": ROS_WEEK,
     "sources": {"ros": ROS_DATE, "pre": PRE_DATE, "own": WK_DATE, "inj": NEWS_DATE},
-    "params": {"version": PARAMS_VERSION, "values": PRM}, "ewWeek": EW_WEEK, "rosN": ROS_N, "byes": byes, "weekDates": week_dates, "teams": team_out, "faabPool": FAAB_POOL, "players": players,
+    "params": {"version": PARAMS_VERSION, "values": PRM, "annual": ANNUAL.get("version")}, "ewWeek": EW_WEEK, "rosN": ROS_N, "byes": byes, "weekDates": week_dates, "teams": team_out, "faabPool": FAAB_POOL, "players": players,
 }
 json.dump(out, open("db.json", "w"), separators=(",", ":"))
 print(len(players), "players;", len(json.dumps(out)) // 1024, "KB; current week", CUR_WEEK, "; timelines from CBS:", matched_cbs)
