@@ -56,6 +56,7 @@ def fetch(cache, last):
     for y in range(FIRST_CLASS - 1, last + 1):
         jobs.append((f"{NV}/stats_player/stats_player_week_{y}.csv", f"nfl/s{y}.csv", y >= last - 1))
         jobs.append((f"{NV}/weekly_rosters/roster_weekly_{y}.csv", f"nfl/rw{y}.csv", y >= last - 1))
+        jobs.append((f"{NV}/rosters/roster_{y}.csv", f"nfl/ro{y}.csv", y >= last - 1))
     for y in range(college.FIRST_SEASON, last):
         jobs.append((college.RAW.format(y=y), f"cfbstats/ps_{y}.csv", y >= last - 2))
     for url, f, refresh in jobs:
@@ -200,12 +201,20 @@ def build(cache, last):
         pools = team_pools(prev)
         rwp = os.path.join(cache, "nfl", f"rw{Y}.csv")
         wk1 = {}
+        rop = os.path.join(cache, "nfl", f"ro{Y}.csv")
         if os.path.exists(rwp):
             rw = pd.read_csv(rwp, low_memory=False, usecols=["gsis_id", "week", "team", "game_type", "status"])
             rw = rw[(rw.game_type == "REG") | rw.game_type.isna()]
             w0 = rw[rw.week == rw.week.min()]
             w0 = w0[~w0.status.isin(["CUT", "RET"])]
             wk1 = dict(zip(w0.gsis_id, w0.team.map(tm)))
+        elif os.path.exists(rop):
+            # before the season (e.g. right after the draft) there is no week-1 roster: use the current rosters
+            ro = pd.read_csv(rop, low_memory=False, usecols=["gsis_id", "team", "status"])
+            ro = ro[~ro.status.isin(["CUT", "RET"])]
+            wk1 = dict(zip(ro.gsis_id, ro.team.map(tm)))
+        else:
+            print(f"no {Y} roster: vacated opportunity unknown for the {Y} class", flush=True)
         tot = prev.groupby(["player_id", "team", "position"])[["carries", "targets", "attempts"]].sum().reset_index()
         tot["left"] = [wk1.get(p) != t for p, t in zip(tot.player_id, tot.team)]
         for T, h in tot.groupby("team"):
@@ -217,6 +226,8 @@ def build(cache, last):
                          "vac_t": nq[nq.left].targets.sum() / max(nq.targets.sum(), 1),
                          "vac_p": q[q.left].attempts.sum() / max(q.attempts.sum(), 1),
                          "vac_rb_r": nq[nq.left & (nq.position == "RB")].carries.sum() / max(nq.carries.sum(), 1)})
+            if not wk1:   # unknown: missing, not "everyone left"
+                rows[-1].update({"vac_r": np.nan, "vac_t": np.nan, "vac_p": np.nan, "vac_rb_r": np.nan})
     L = pd.DataFrame(rows)
     dp = dp.merge(L, on=["season", "team"], how="left")
 

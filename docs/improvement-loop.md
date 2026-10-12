@@ -76,3 +76,31 @@ Parameter file consistency; assembled page = archived Week 5 engine; runner repr
 trade-engine regressions on Week 5 data (Allen for two genuine starters: median acceptance < 10% and < 35%
 of pairs at 50%+; Shough for T. Warren + J. Warren in the user's league < 20%, fixture anonymized);
 scorecard season grouping; gate behaviour.
+
+## Rookie prior, yearly constants and offseason tasks (Oct 12, 2026)
+- Rookie-prior model (`rookie/`, `data/rookie/`, `docs/rookie-model.md`): drafted rookies had no usage prior
+  (only the depth-chart prior for QBs). The model predicts a drafted rookie's share of team carries/targets
+  and per-opportunity efficiency from information available after the draft; per class it is fitted on
+  earlier classes only, and the feature set (draft slot alone won every year so far over college production,
+  combine, age and landing spot) is chosen on earlier classes too. New builder parameter `rookie_prior`
+  (0 = old model exactly; neutral check OK, db.json identical, tests): shares count like
+  `rookie_prior × prior_games` games, efficiency gets pseudo-opportunities at the predicted rates. Marked
+  `new`, so the next Tuesday run tests it first. Dry run on Oct 12: 0 → 0.25 −0.0093 ± 0.0028 pts (z −3.31,
+  passes the gate); 0.5 passes (z −2.81); 1.0 doesn't (z −2.17). Not adopted outside the loop.
+- `params/annual.json`: the constants that were hardcoded in three places (aging YOY curves, game-environment
+  ENV_K, low-volume cuts, FAAB thresholds) now live in one file read by `build_db.py`, `backtest_core.py` and
+  the engine (`ftlib.engine_source` writes its `ENV_K` line, like `PARAMS`; archived engines keep theirs).
+  Version 1 = the old numbers (test `annual_constants_shared_and_reproduced`). `tools/annual_refit.py`
+  refits them each February from all completed seasons, gated by `improve.gate`, then evaluates the most
+  recent season once (sealed holdout, `ledger/holdout.jsonl`). Preview run on Oct 12 (holdout 2025, nothing
+  written): aging −0.0023 (z −2.25, rejected), ENV_K +0.0018 (worse), low-volume cuts ×0.75 −0.0032 (z −2.58,
+  would pass), ×1.25 worse.
+- Fix in `improve.py`: after an adoption the saved champion predictions were those of the parameters the run
+  started with (the Oct 10 file held v1 predictions under a v2 label, so the neutral check reported CHANGED on
+  untouched code). It now saves the live parameters' predictions, a dry run creates a missing champion file,
+  and the neutral check says when the saved champion was made with other parameter values. The champion file
+  was refreshed on Oct 12 (v2, main code).
+- Trade autopsy (`tools/trade_autopsy.py`, `tools/autopsy_runner.js`): for each trade, the archived engine at
+  the trade week with rosters rolled back to the trade vs the players' points afterwards; acceptance re-graded.
+- Offseason scheduled tasks: trade autopsy 2027-01-12, annual refit 2027-02-20, rookie priors 2027-05-05
+  (each schedules next year's), alongside the August rollover.
