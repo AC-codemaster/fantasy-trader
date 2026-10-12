@@ -58,6 +58,19 @@ def _load_params():
 PRM, PARAMS_VERSION, PARAMS_PATH = _load_params()
 
 
+def _load_annual():
+    """Yearly-refitted constants from params/annual.json (runbooks/annual-refit.md): $FT_ANNUAL, ./annual.json,
+    ../params/annual.json next to this script; the built-in values below otherwise (= annual.json version 1)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path in (os.environ.get("FT_ANNUAL"), "annual.json", os.path.join(here, "..", "params", "annual.json")):
+        if path and os.path.exists(path):
+            return json.load(open(path))
+    return {}
+
+
+ANNUAL = _load_annual()
+
+
 def prm(key, default):
     return float(PRM.get(key, default))
 
@@ -164,7 +177,11 @@ K = {k_: prm("K_" + k_, v_) for k_, v_ in {"ypa": 150, "ptd": 250, "int": 300, "
 # (backup QBs: 6.4 yards/attempt and a 2.9% TD rate vs 7.3 and 4.8% for starters). The target moves
 # from the low-volume rate to the league rate as his weighted opportunities approach AFULL.
 LOWCUT = {"QB": ("attempts", 150), "RB": ("carries", 40), "WR": ("targets", 25), "TE": ("targets", 20), "RB_rec": ("targets", 15)}
-AFULL = {k_: v_ * prm("low_target", 2.0) for k_, v_ in {"QB": 300, "RB": 100, "WR": 60, "TE": 45, "RB_rec": 40}.items()}  # 2.0 → 600/200/120/90/80
+AFULL0 = {"QB": 300, "RB": 100, "WR": 60, "TE": 45, "RB_rec": 40}
+if "low_volume" in ANNUAL:
+    LOWCUT = {k_: tuple(v_) for k_, v_ in ANNUAL["low_volume"]["lowcut"].items()}
+    AFULL0 = dict(ANNUAL["low_volume"]["afull"])
+AFULL = {k_: v_ * prm("low_target", 2.0) for k_, v_ in AFULL0.items()}  # 2.0 → 600/200/120/90/80
 _seas = pd.concat([s24.groupby(["player_id", "position"])[COLS].sum().reset_index(),
                    s25.groupby(["player_id", "position"])[COLS].sum().reset_index()])
 lg_low = {}
@@ -358,6 +375,8 @@ YOY = {
     "TE": [(24, 1.10), (25, 1.06), (26, 1.03), (27, 1.01), (28, 1.00), (29, 0.97), (30, 0.94), (31, 0.91), (99, 0.88)],
     "QB": [(25, 1.05), (26, 1.03), (27, 1.01), (32, 1.00), (33, 0.98), (34, 0.96), (35, 0.94), (36, 0.92), (99, 0.89)],
 }
+if "yoy" in ANNUAL:   # refitted yearly (params/annual.json); the table above is version 1
+    YOY = {k_: [tuple(x_) for x_ in v_] for k_, v_ in ANNUAL["yoy"].items()}
 VET_AGE = {"RB": 28, "WR": 30, "TE": 30, "QB": 35}   # from here on, last year's data counts less
 VET_PRIOR = prm("vet_prior", 0.6)
 SEASON_START = pd.Timestamp(f"{SEASON}-09-01")
@@ -519,6 +538,46 @@ def prior_strength(pid, pos, team, c):
     return k
 
 
+# Rookie prior (data/rookie/predictions.csv, rookie/rookie_model.py): for drafted rookies, who have no NFL
+# history, the rookie model's share of team carries/targets and per-opportunity efficiency from draft slot.
+# ROOKIE_PRIOR weights it: shares count like ROOKIE_PRIOR x PRIOR_GAMES games; efficiency gets ROOKIE_PRIOR x
+# ROOKIE_OPPS pseudo-opportunities at the predicted rates. 0 = no prior (the model before Oct 12, 2026, exactly).
+# QB pass attempts keep the depth-chart prior.
+ROOKIE_PRIOR = prm("rookie_prior", 0.0)
+ROOKIE_OPPS = {"QB": {"attempts": 150}, "RB": {"carries": 60, "targets": 20}, "WR": {"targets": 40}, "TE": {"targets": 30}}
+ROOKIES = {}
+if ROOKIE_PRIOR > 0:
+    _rp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "rookie", "predictions.csv")
+    for _p in (os.environ.get("FT_ROOKIES"), "rookie_predictions.csv", _rp):
+        if _p and os.path.exists(_p):
+            _rk = pd.read_csv(_p, low_memory=False)
+            ROOKIES = {r_.gsis_id: r_._asdict() for r_ in _rk[_rk.season == SEASON].itertuples(index=False)}
+            break
+
+
+def rookie_pseudo(pid, pos):
+    """Pseudo-counts the rookie prior adds to his efficiency history ({} when off or not a rookie)."""
+    rk = ROOKIES.get(pid)
+    if ROOKIE_PRIOR <= 0 or rk is None:
+        return {}
+    n = {k_: ROOKIE_PRIOR * v_ for k_, v_ in ROOKIE_OPPS.get(pos, {}).items()}
+    out = {}
+    if pos == "QB":
+        a_ = n.get("attempts", 0.0)
+        qc_ = a_ * rk["cpa"]
+        out = {"attempts": a_, "passing_yards": a_ * rk["ypa"], "passing_tds": a_ * rk["ptd"], "passing_interceptions": a_ * rk["ipa"],
+               "carries": qc_, "rushing_yards": qc_ * rk["ypc"], "rushing_tds": qc_ * rk["rtd"]}
+    else:
+        c_, t_ = n.get("carries", 0.0), n.get("targets", 0.0)
+        out = {"carries": c_, "rushing_yards": c_ * rk["ypc"], "rushing_tds": c_ * rk["rtd"], "targets": t_,
+               "receptions": t_ * rk["cr"], "receiving_yards": t_ * rk["ypt"], "receiving_tds": t_ * rk["rctd"]}
+    opp = out.get("carries", 0.0) + out.get("targets", 0.0) + (out.get("attempts", 0.0) if pos == "QB" else 0.0)
+    lg_opp_ = (lg.loc[pos, "attempts"] + lg.loc[pos, "carries"]) if pos == "QB" else (lg.loc[pos, "carries"] + lg.loc[pos, "targets"])
+    out["fl"] = opp * lg.loc[pos, "fl"] / max(lg_opp_, 1)
+    out["two"] = opp * lg.loc[pos, "two"] / max(lg_opp_, 1)
+    return out
+
+
 # Latest ESPN depth chart (via nflverse): QB order sets the prior for who throws the passes,
 # because a backup's numbers only come from games he started.
 qb_depth = {}
@@ -549,6 +608,8 @@ for tm in teams:
             k = prior_strength(pid, pos, tm, c)
             if v is not None and k > 0:
                 u0[pid], n[pid] = v, k * team_pool[tm][c]
+            elif ROOKIE_PRIOR > 0 and pid in ROOKIES and ROOKIES[pid]["sh_" + c] > 0:
+                u0[pid], n[pid] = ROOKIES[pid]["sh_" + c], ROOKIE_PRIOR * PRIOR_GAMES * team_pool[tm][c]
         tot0 = sum(u0.values())
         if tot0 > 1:
             u0 = {k_: v / tot0 for k_, v in u0.items()}
@@ -572,13 +633,16 @@ def efficiency(pid, pos):
     f2 = f1 * yoy(pos, age - 1 if age else None)
     vet = VET_PRIOR if (age is not None and age >= VET_AGE[pos]) else 1.0
     scaled = {"passing_yards", "passing_tds", "rushing_yards", "rushing_tds", "receiving_yards", "receiving_tds"}
+    rk_add = rookie_pseudo(pid, pos)
 
-    def h(col):
+    def h(col, real=False):
         x = a[col] if a is not None else 0.0
         if b is not None:
             x += W25 * vet * b[col] * (np.sqrt(f1) if col in scaled else 1.0)
         if c24 is not None:
             x += W24 * vet * c24[col] * (np.sqrt(f2) if col in scaled else 1.0)
+        if rk_add and not real:
+            x += rk_add.get(col, 0.0)
         return x
 
     def sh(num, den, k, base_pos=pos, num_extra=None):
@@ -587,7 +651,7 @@ def efficiency(pid, pos):
         lo = lg_low.get(key)
         if lo is not None and lo[den] > 0:
             lr_low = lo[num] / lo[den]
-            lr = lr_low + (lr - lr_low) * min(1.0, h(den) / AFULL[key])
+            lr = lr_low + (lr - lr_low) * min(1.0, h(den, real=True) / AFULL[key])
         return (h(num) + k * lr) / (h(den) + k)
 
     def sh2(nv, dv, k, lr):
@@ -845,6 +909,8 @@ def breakout_pool(stats, year):
     CUT = {"QB": 20, "RB": 50, "WR": 70, "TE": 20}
     N_START = {"QB": 12, "RB": 30, "WR": 40, "TE": 12}
     N_WAIVER = {"QB": 18, "RB": 48, "WR": 64, "TE": 18}
+    if "faab" in ANNUAL:
+        CUT, N_START, N_WAIVER = ANNUAL["faab"]["cut"], ANNUAL["faab"]["n_start"], ANNUAL["faab"]["n_waiver"]
     out = {}
     for key, col in (("std", "fantasy_points"), ("ppr", "fantasy_points_ppr")):
         g = stats.groupby(["player_id", "position"])[col].agg(["sum", "count"])
@@ -885,7 +951,7 @@ out = {
     "builtAt": pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
     "season": SEASON, "curWeek": CUR_WEEK, "doneWeek": DONE_WEEK, "lastWeek": LAST_WEEK, "rosWeek": ROS_WEEK,
     "sources": {"ros": ROS_DATE, "pre": PRE_DATE, "own": WK_DATE, "inj": NEWS_DATE},
-    "params": {"version": PARAMS_VERSION, "values": PRM}, "ewWeek": EW_WEEK, "rosN": ROS_N, "byes": byes, "weekDates": week_dates, "teams": team_out, "faabPool": FAAB_POOL, "players": players,
+    "params": {"version": PARAMS_VERSION, "values": PRM, "annual": ANNUAL.get("version")}, "ewWeek": EW_WEEK, "rosN": ROS_N, "byes": byes, "weekDates": week_dates, "teams": team_out, "faabPool": FAAB_POOL, "players": players,
 }
 json.dump(out, open("db.json", "w"), separators=(",", ":"))
 print(len(players), "players;", len(json.dumps(out)) // 1024, "KB; current week", CUR_WEEK, "; timelines from CBS:", matched_cbs)

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "updated": "2026-10-12",
+  "note": "Constants refitted once a year from all completed seasons (runbooks/annual-refit.md, tools/annual_refit.py), not by the weekly loop. yoy: expected change in per-game production from one season to the next by age in the new season ([age up to, factor], pipeline/build_db.py and backtest/backtest_core.py). env_k: game-environment log elasticities [per unit of implied-total change x, per spread point] (engine/engine.js via tools/ftlib.py engine_source, and the backtest). low_volume: season-total cut below which a player counts as low-volume for the efficiency shrink target ([stat, cut]) and the base opportunities (x low_target) at which the target reaches the league rate. faab: preseason-rank cut for 'on waivers', startable and waiver-level positional ranks for the FAAB breakout pool (build_db.py). Version 1 = the values hardcoded before Oct 12, 2026.",
+  "yoy": {
+    "RB": [[24, 1.04], [25, 1.01], [26, 0.98], [27, 0.95], [28, 0.91], [29, 0.88], [99, 0.85]],
+    "WR": [[23, 1.08], [24, 1.05], [25, 1.03], [26, 1.01], [27, 1.00], [28, 0.98], [29, 0.96], [30, 0.93], [31, 0.90], [99, 0.87]],
+    "TE": [[24, 1.10], [25, 1.06], [26, 1.03], [27, 1.01], [28, 1.00], [29, 0.97], [30, 0.94], [31, 0.91], [99, 0.88]],
+    "QB": [[25, 1.05], [26, 1.03], [27, 1.01], [32, 1.00], [33, 0.98], [34, 0.96], [35, 0.94], [36, 0.92], [99, 0.89]]
+  },
+  "env_k": {"att": [0.2378, -0.00353], "pyd": [0.5709, -0.0025], "ptd": [0.6785, -0.00071], "car": [-0.0775, 0.00735], "ryd": [0.1785, 0.00615], "rtd": [0.4132, 0.00569]},
+  "low_volume": {
+    "lowcut": {"QB": ["attempts", 150], "RB": ["carries", 40], "WR": ["targets", 25], "TE": ["targets", 20], "RB_rec": ["targets", 15]},
+    "afull": {"QB": 300, "RB": 100, "WR": 60, "TE": 45, "RB_rec": 40}
+  },
+  "faab": {
+    "cut": {"QB": 20, "RB": 50, "WR": 70, "TE": 20},
+    "n_start": {"QB": 12, "RB": 30, "WR": 40, "TE": 12},
+    "n_waiver": {"QB": 18, "RB": 48, "WR": 64, "TE": 18}
+  }
+}

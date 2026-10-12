@@ -417,7 +417,12 @@ def neutral_check():
     meta = json.load(open(CHAMP_META))
     weeks = {int(k): v for k, v in meta["weeks"].items()}
     old = pd.read_csv(CHAMP)
-    new = ev.predict(values(load_params_file()), weeks)
+    pj = load_params_file()
+    base = {k: v for k, v in values(pj).items() if not pj["params"][k].get("new")}
+    if meta.get("paramsHash") not in (ev.params_hash(base), ev.params_hash(values(pj))):
+        print(f"note: the saved champion ({meta.get('date')}) was made with other parameter values than the live ones; "
+              "refresh it with a full improve.py run (or --dry-run after deleting data/backtest/champion.csv.gz) on main")
+    new = ev.predict(values(pj), weeks)
     M = old.merge(new[["season", "week", "id", "pred"]], on=["season", "week", "id"], how="outer", suffixes=("_old", "_new"))
     missing = int(M.pred_old.isna().sum() + M.pred_new.isna().sum())
     diff = float((M.pred_old - M.pred_new).abs().max())
@@ -575,7 +580,14 @@ def main():
         tested = {k for c, *_ in results for k in c["change"]}
         if any(pj_now["params"][k].pop("new", None) for k in tested if k in pj_now["params"]):
             dump_params(pj_now)
-        save_champion(champ, vals, weeks, pj.get("version"))
+        # the champion file must hold the predictions of the parameters now live (after an adoption or a
+        # revert they differ from the ones this run started with)
+        vals_now = values(load_params_file())
+        if vals_now != vals:
+            champ = ev.predict(vals_now, weeks, a.procs)
+        save_champion(champ, vals_now, weeks, load_params_file().get("version"))
+    elif not os.path.exists(CHAMP):
+        save_champion(champ, vals, weeks, pj.get("version"))   # first run: a dry run creates the neutral-check baseline
     state["lastRun"] = {"date": today(), "week": label, "tested": len(results) + (1 if expx else 0),
                         "adopted": describe(winner[1]["change"]) if winner and not a.dry_run else None, "parity": parity}
     if not a.dry_run:

@@ -12,6 +12,7 @@
     "w1":          {"value": 0.7, "min": 0.3, "max": 1.2, "step": 0.1, "layer": "builder", "eval": "backtest", "desc": "Weight of last season's opportunities in efficiency"},
     "w2":          {"value": 0.4, "min": 0.0, "max": 0.8, "step": 0.1, "layer": "builder", "eval": "backtest", "desc": "Weight of the season before last in efficiency"},
     "low_target":  {"value": 2.25, "min": 0.5, "max": 4.0, "step": 0.25, "layer": "builder", "eval": "backtest", "desc": "Scale on opportunities needed before efficiency shrinks to the full-league rate instead of the low-volume rate"},
+    "rookie_prior":{"value": 0.0, "min": 0.0, "max": 1.0, "step": 0.25, "layer": "builder", "eval": "backtest", "new": true, "desc": "Weight on the rookie model's share and efficiency prior for drafted rookies with no NFL history (data/rookie/predictions.csv); 0 = none"},
     "K_ypa":       {"value": 150, "min": 40, "max": 600, "mult": 1.25, "layer": "builder", "eval": "backtest", "desc": "Shrinkage (attempts) for yards per attempt"},
     "K_ptd":       {"value": 250, "min": 60, "max": 1000, "mult": 1.25, "layer": "builder", "eval": "backtest", "desc": "Shrinkage (attempts) for passing TD rate"},
     "K_int":       {"value": 300, "min": 75, "max": 1200, "mult": 1.25, "layer": "builder", "eval": "backtest", "desc": "Shrinkage (attempts) for interception rate"},
