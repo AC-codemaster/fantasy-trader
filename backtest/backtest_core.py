@@ -446,7 +446,9 @@ class Season:
                                 g_cur=int(tc.loc[pid].g) if pid in tc.index else 0, age=ages.get(pid),
                                 qbrank=qbd.get((tm, pid)), ur=ur, ut=ut, up=up,
                                 boost_r=Dall['r'] / D['r'] if D['r'] > 0 else 1, boost_t=Dall['t'] / D['t'] if D['t'] > 0 else 1, boost_p=Dall['p'] / D['p'] if D['p'] > 0 else 1,
-                                opp=self.opp.get((tm, W)), implied=ln['implied'] if ln else np.nan, spread=ln['spread'] if ln else np.nan))
+                                opp=self.opp.get((tm, W)), implied=ln['implied'] if ln else np.nan, spread=ln['spread'] if ln else np.nan,
+                                # expected stat line (the components behind pred): the start/sit distributions are fitted on these
+                                qc=att * e["cpa"] if pos == "QB" else 0.0, **{"c_" + k: v for k, v in comp.items()}))
         R = pd.DataFrame(out)
         act = nxt.groupby("player_id").agg(actual=("fantasy_points_ppr", "sum"), a_car=("carries", "sum"), a_tgt=("targets", "sum"),
                                            a_att=("attempts", "sum"))

@@ -242,6 +242,86 @@ def annual_constants_shared_and_reproduced():
         assert f"annual constants v{A['version']}" in log, "annual.json changed without an annual-refit changelog entry"
 
 
+@test
+def distribution_params_are_sane():
+    """params/dist.json (start/sit distributions) has every part the page needs, within sensible ranges."""
+    import ftlib
+    D = ftlib.load_dist()
+    assert D, "params/dist.json missing (dist/fit_dist.py fit --write)"
+    for k in ftlib.DIST_KEYS:
+        assert k in D, f"dist.json has no {k}"
+    for part in ("team", "game", "player", "play"):
+        for k, v in D[part].items():
+            vals = v.values() if isinstance(v, dict) else [v]
+            hi = 20 if k == "other_ypt" else 5          # yards per target; everything else is a spread or share
+            assert all(0 <= float(x) < hi for x in vals), f"{part}.{k} out of range"
+    for pos, m in D["mean"].items():
+        assert all(0.6 <= float(x) <= 1.6 for x in m.values()), f"mean multipliers for {pos} out of range"
+    pp = D["pplay"]
+    assert all(0 <= x <= 1 for x in pp["base"].values()) and 0 <= pp["doubtful"] <= 0.2 and 0.9 <= pp["unlisted"] <= 1
+    assert pp["base"]["Full"] > pp["base"]["Limited"] > pp["base"]["DNP"], "practice report order"
+    eng = engine_source()
+    m = re.search(r"^const DIST = (\{.*\});$", eng, re.M)
+    assert m and json.loads(m.group(1))["version"] == D["version"], "the page's engine doesn't carry params/dist.json"
+
+
+def _startsit_run(dump=None):
+    with tempfile.TemporaryDirectory() as td:
+        ep = os.path.join(td, "e.js")
+        open(ep, "w").write(engine_source())
+        args = [os.path.join(ROOT, "tests", "startsit_checks.js"), ep, os.path.join(W5, "db.json"), FIX]
+        if dump:
+            args += ["--dump", dump]
+        return node(*args)
+
+
+@test
+def startsit_engine_behaves():
+    """Start/sit on the archived Week 5 data and the user's league: deterministic, legal lineups, the best lineup's
+    chance to win at least the projection lineup's, targets harder to reach as they rise, QB and receiver move
+    together, two backs on one team move apart, calibrated means near the projections, fast enough for the page."""
+    r = _startsit_run()
+    assert r["deterministic"], "same seed gave different simulated games"
+    ss = r["startSit"]
+    assert ss["legal"] and ss["n"] == ss["slots"], "best lineup doesn't fill the slots legally"
+    assert ss["best"] >= ss["proj"] - 0.005, f"best lineup {ss['best']:.3f} below the projection lineup {ss['proj']:.3f}"
+    assert r["need"]["falls"], "chance of reaching a target went up with the target"
+    assert r["corr"]["qbwr"] > 0.2 and r["corr"]["rbrb"] < 0.05, f"correlations off: {r['corr']}"
+    mr = r["meanRatio"]
+    assert 0.95 <= mr["median"] <= 1.2 and mr["min"] > 0.8 and mr["max"] < 1.5, f"simulated means vs projections: {mr}"
+    assert r["ms"] < 8000, f"simulation too slow for the page: {r['ms']} ms"
+
+
+@test
+def startsit_matches_reference_simulation():
+    """The page's simulation (engine.js) and the reference one the parameters were fitted with (dist/sim.py) give
+    the same distributions on the same inputs (uncalibrated, nobody injured), up to simulation noise."""
+    sys.path.insert(0, os.path.join(ROOT, "dist"))
+    import sim
+    with tempfile.TemporaryDirectory() as td:
+        fp = os.path.join(td, "frame.json")
+        _startsit_run(fp)
+        rows = json.load(open(fp))
+    F = sim.order(pd.DataFrame(rows))
+    import ftlib
+    P = ftlib.load_dist()
+    for pos in P["mean"]:
+        P["mean"][pos] = {k: 1.0 for k in P["mean"][pos]}
+    lg = json.load(open(FIX))["settings"]["scoring"]
+    keys = ["passYd", "passTd", "int", "rushYd", "rushTd", "rec", "recYd", "recTd", "fumble", "twoPt"]
+    w = np.array([float(lg.get(k, 0) or 0) for k in keys])
+    pts = sim.points(sim.simulate(sim.prep(F), P, n=4000, seed=3), w)
+    q = np.quantile(pts, [0.1, 0.5, 0.9], axis=0)
+    m = F.pred.values >= 3
+    js = np.array(F.js_q.tolist())
+    d_mean = np.abs(pts.mean(0) - F.js_mean.values)[m]
+    d_q = np.abs(q.T - js)[m]
+    assert d_mean.mean() < 0.3 and d_q[:, 1].mean() < 0.35 and d_q[:, 2].mean() < 0.6, \
+        f"engine vs reference: mean {d_mean.mean():.2f}, P50 {d_q[:, 1].mean():.2f}, P90 {d_q[:, 2].mean():.2f}"
+    ratio = (F.js_mean.values / F.pred.values)[m]
+    assert 0.95 < np.median(ratio) < 1.05, f"uncalibrated simulation doesn't reproduce the projections ({np.median(ratio):.3f})"
+
+
 if __name__ == "__main__":
     sys.path.insert(0, os.path.join(ROOT, "improve"))
     fails = 0

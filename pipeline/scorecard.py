@@ -22,8 +22,9 @@ Sources graded:
             separates model error from news that broke after Tuesday; the basis for model diagnostics
   fp_early  FantasyPros weekly consensus, first snapshot of the week (same information as our freeze)
   fp_final  FantasyPros, last snapshot before each player's kickoff (all the week's news)
-  late      the page after the Saturday refresh (Friday's final injury reports), from `freeze --tag late`;
-            players whose game had already kicked off keep their Tuesday number
+  late      the page as it stood right before each player's kickoff: the latest pre-kickoff refresh (`freeze --tag
+            late-thu / late-sun ...`, runbooks/gameday.md; `late` = the old Saturday refresh) whose snapshot has him,
+            i.e. frozen before his game started; players no refresh caught keep their Tuesday number
 Goals: the model is judged against fp_early (same information); the product (late, else page) against fp_final.
 """
 import argparse
@@ -58,7 +59,7 @@ DP_REPO = "https://github.com/dynastyprocess/data"
 DP_HIST = "dp-history"
 FP_FILE = "files/fp_latest_weekly.csv"
 SOURCES = ["page", "late", "model", "hind", "fp_early", "fp_final"]
-LABEL = {"page": "Our page (Tuesday)", "late": "Our page after the Saturday refresh", "model": "Our usage model (no expert blend)",
+LABEL = {"page": "Our page (Tuesday)", "late": "Our page right before kickoff", "model": "Our usage model (no expert blend)",
          "hind": "Our page with hindsight availability", "fp_early": "FantasyPros, Tuesday", "fp_final": "FantasyPros, final"}
 GOAL_WEEKS, GOAL_PCT = 6, 3.0
 
@@ -81,6 +82,18 @@ def dpath(*parts):
 
 def tag(S, W):
     return f"{S}-w{int(W):02d}"
+
+
+LATE_RE = re.compile(r"-w\d{2}-late(-[a-z0-9-]+)?\.json$")
+
+
+def is_late(path):
+    """A pre-kickoff snapshot (late, late-thu, late-sun ...) rather than a Tuesday freeze."""
+    return bool(LATE_RE.search(os.path.basename(path)))
+
+
+def late_paths(S, W):
+    return sorted(glob.glob(dpath("freeze", tag(S, W) + "-late*.json")))
 
 
 # ----------------------------------------------------------------------------- engine
@@ -190,8 +203,10 @@ def freeze(a):
         open(dbp, "w").write(db_text)
         meta, P = run_engine(eng, dbp)
     S, W = int(meta["season"]), int(meta["week"])
-    late = a.tag == "late"
-    path = dpath("freeze", tag(S, W) + ("-late" if late else "") + ".json")
+    if a.tag and not re.fullmatch(r"late(-[a-z0-9-]+)?", a.tag):
+        sys.exit(f"unknown tag {a.tag!r}: use late-thu, late-sun, late-sun-am (or late)")
+    late = a.tag.startswith("late")
+    path = dpath("freeze", tag(S, W) + ("-" + a.tag if late else "") + ".json")
     if late and not os.path.exists(dpath("freeze", tag(S, W) + ".json")):
         print(f"no Tuesday freeze for week {W}; a late freeze only adds to one. Nothing to do.")
         return
@@ -221,7 +236,7 @@ def freeze(a):
     meta.update(frozenAt=now.strftime("%Y-%m-%dT%H:%M:%SZ"), pageVersion=a.version, commit=commit, note=a.note or "", tag=a.tag or "",
                 fpScrape=fp_date, excludedStarted=sorted({t for t, k in kick.items() if k <= now}), n=len(P))
     # archive the inputs: everything needed to replay this week with any later engine or parameters
-    ind = dpath("inputs", str(S), f"w{W:02d}", "late") if late else dpath("inputs", str(S), f"w{W:02d}")
+    ind = dpath("inputs", str(S), f"w{W:02d}", a.tag) if late else dpath("inputs", str(S), f"w{W:02d}")
     os.makedirs(ind, exist_ok=True)
     keep = {"db.json": db_text, "engine.js": eng}
     if inj_text:
@@ -399,13 +414,17 @@ def grade_week(path, games, hist):
         F["hind_ppr"] = F.id.map(H.page_ppr)
         F["hind_model_ppr"] = F.id.map(H.model_ppr)
         F["hind_o_car"], F["hind_o_tgt"], F["hind_o_att"] = F.id.map(H.o_car), F.id.map(H.o_tgt), F.id.map(H.o_att)
-    lp = dpath("freeze", tag(S, W) + "-late.json")
+    # the product view: each player's number from the latest pre-kickoff snapshot that has him (a snapshot only
+    # holds players whose game hadn't started when it was frozen), else Tuesday's
     F["late_ppr"] = F.page_ppr
-    late_at = None
-    if os.path.exists(lp):
+    late_at = []
+    snaps = []
+    for lp in late_paths(S, W):
         lm, LF = load_freeze(lp)
-        F["late_ppr"] = F.id.map(LF.set_index("id").page_ppr).where(lambda x: x.notna(), F.page_ppr)
-        late_at = lm.get("frozenAt")
+        snaps.append((lm.get("frozenAt") or "", LF.set_index("id").page_ppr, lm.get("tag") or "late"))
+    for at, col, tg in sorted(snaps, key=lambda x: x[0]):
+        F["late_ppr"] = F.id.map(col).where(lambda x: x.notna(), F["late_ppr"])
+        late_at.append({"tag": tg, "at": at, "n": int(col.notna().sum())})
     early, final, t0 = fp_views(hist.get(W, [])) if hist is not None else (None, None, None)
     if early is None and F.fp_ecr.notna().any():   # no history: fall back to the numbers saved at the freeze
         early = F.dropna(subset=["fp_ecr"]).set_index("id")[["fp_ecr", "fp_pts"]].rename(columns={"fp_ecr": "ecr", "fp_pts": "r2p_pts"})
@@ -419,7 +438,7 @@ def grade_week(path, games, hist):
     info = {"week": W, "season": S, "status": status, "frozenAt": meta.get("frozenAt"), "pageBuilt": meta.get("builtAt"),
             "commit": meta.get("commit"), "note": meta.get("note", ""), "fpEarlyAt": t0, "gamesDone": len(done) // 2,
             "games": len(all_teams) // 2, "excludedStarted": meta.get("excludedStarted", []),
-            "hindsight": bool(F.hind_ppr.notna().any()), "lateAt": late_at}
+            "hindsight": bool(F.hind_ppr.notna().any()), "lateAt": late_at[-1]["at"] if late_at else None, "lateSnapshots": late_at}
     return F, info
 
 
@@ -729,7 +748,7 @@ def ros_eval(games, graded_weeks):
     rows = []
     done_weeks = {}
     for p in sorted(glob.glob(dpath("freeze", "*.json"))):
-        if p.endswith("-late.json"):
+        if is_late(p):
             continue
         meta, _ = load_freeze(p)
         S, W = int(meta["season"]), int(meta["week"])
@@ -833,7 +852,7 @@ def candidates(diag, cum, sweep, weeks_final):
 # ----------------------------------------------------------------------------- grade command
 def grade(a):
     games = pd.read_csv("games.csv", low_memory=False)
-    paths = sorted(p for p in glob.glob(dpath("freeze", "*.json")) if not p.endswith("-late.json"))
+    paths = sorted(p for p in glob.glob(dpath("freeze", "*.json")) if not is_late(p))
     if not paths:
         sys.exit("no frozen weeks in freeze/")
     os.makedirs(dpath("graded"), exist_ok=True)
@@ -932,7 +951,8 @@ def goal_status(cum, nfinal):
     """Two goals. Model: beat FantasyPros' Tuesday consensus (same information) by 3%+ in average miss
     with 95% confidence and make more right start/sit calls, over 6+ graded weeks. Product: the same
     against their final consensus (all the week's news), which a Tuesday freeze can only reach with
-    late-week updates: so the product is our page after the Saturday refresh (Tuesday's where there was none)."""
+    late-week updates: so the product is our page as it stood right before each kickoff (the latest pre-kickoff
+    refresh; Tuesday's where there was none)."""
     def one(c):
         m, p = c.get("mae"), c.get("pairs")
         st = {"weeks": nfinal, "needWeeks": GOAL_WEEKS, "maeTargetPct": GOAL_PCT}
@@ -1011,10 +1031,10 @@ def markdown(o):
         return "\n".join(L + ["", "No graded weeks yet."]) + "\n"
     c, g = o["cumulative"], o["goal"]
     L += ["", "## Where we stand", ""]
-    for key, name in (("model", "Model goal (vs FantasyPros Tuesday, same information)"), ("product", "Product goal (our Saturday page vs FantasyPros final, all the week's news)")):
+    for key, name in (("model", "Model goal (vs FantasyPros Tuesday, same information)"), ("product", "Product goal (our page right before kickoff vs FantasyPros final, all the week's news)")):
         x = g[key]
         L.append(f"- {name}: {x['weeks']} of {x['needWeeks']} weeks; miss lead {fmt(x.get('maeGapPct'), 1)}% vs {x['maeTargetPct']}% target{' (significant)' if x.get('maeSig') else ''} — {'MET' if x['met'] else 'not met yet'}")
-    for key, name in (("page_vs_early", "FantasyPros Tuesday"), ("late_vs_final", "FantasyPros final, our Saturday page"), ("hind_vs_final", "FantasyPros final, our model with hindsight availability")):
+    for key, name in (("page_vs_early", "FantasyPros Tuesday"), ("late_vs_final", "FantasyPros final, our page right before kickoff"), ("hind_vs_final", "FantasyPros final, our model with hindsight availability")):
         x = c[key]
         parts = []
         if x.get("mae"):
@@ -1080,7 +1100,8 @@ if __name__ == "__main__":
     f.add_argument("--now", default="")
     f.add_argument("--note", default="")
     f.add_argument("--force", action="store_true")
-    f.add_argument("--tag", default="", choices=["", "late"], help="late = the Saturday refresh (adds to the Tuesday freeze)")
+    f.add_argument("--tag", default="", help="late-thu / late-sun / late-sun-am (pre-kickoff refreshes, runbooks/gameday.md; "
+                   "late = the old Saturday refresh): adds a snapshot to the Tuesday freeze")
     g = sub.add_parser("grade")
     g.add_argument("--weeks", type=lambda s: [int(x) for x in s.split(",")], default=None)
     g.add_argument("--regrade", action="store_true")

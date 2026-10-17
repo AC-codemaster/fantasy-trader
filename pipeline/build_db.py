@@ -11,6 +11,9 @@ Inputs (downloaded with --fetch):
 Inputs gathered by Claude each week (see the refresh runbook):
   cbs_injuries.tsv   team, player, pos, injury, status  (CBS Sports team injury pages)
   injury_news.json   news-confirmed timelines, e.g. season-ending injuries
+  gameday.json       game-day inactives, gathered by the Thursday and Sunday pre-kickoff runs (runbooks/gameday.md):
+                     {"updated": ISO time, "teams": {"JAX": {"inactive": ["Full Name", ...], "src": "..."}, ...}};
+                     a team listed has posted its inactives: everyone else on it is active this week
 
 Per player, the database stores per-game scoring components (scored in the page, so
 league settings change every number):
@@ -25,8 +28,11 @@ injury timeline:
   ij = {thru, st, inj, why, src, upd}  thru = last week he is expected to miss (18 = season)
   lg    -> last 2026 week he played (stats or offensive snaps): the engine discounts a first game back
   ew    -> FantasyPros weekly position rank for the current week (DB.ewWeek says which week)
+  gs/pr -> this week's game status (Questionable / Doubtful / Out) and last practice (Full / Limited / DNP);
+           gd = "active" / "inactive" once his team's game-day inactives are out (start/sit chance he plays)
 per team: env = {week: [x, spread, implied]} game environment from Vegas lines (current week) or
   projected from market power ratings (later weeks); x = implied total vs the team's usual, minus 1
+this week: opp = {team: opponent}, kick = {team: kickoff, ISO with offset}
 
 Backtested formula settings (2024 fit, 2025-26 holdout): share fit weights recent games by DECAY per
 week; efficiency for thin samples shrinks toward low-volume players' rates, not the league average.
@@ -292,6 +298,13 @@ if os.path.exists("cbs_injuries.tsv"):
     c = pd.read_csv("cbs_injuries.tsv", sep="\t", dtype=str).fillna("")
     for _, row in c.iterrows():
         cbs[(CBS_TEAM.get(row.team, row.team), row.pos) + name_key(row.player)] = row
+# game-day inactives (Thursday / Sunday pre-kickoff runs): teams listed have posted theirs
+GAMEDAY, GAMEDAY_AT = {}, ""
+if os.path.exists("gameday.json"):
+    _gd = json.load(open("gameday.json"))
+    GAMEDAY_AT = _gd.get("updated", "")
+    for _t, _v in (_gd.get("teams") or {}).items():
+        GAMEDAY[CBS_TEAM.get(_t, _t)] = {name_key(x) for x in _v.get("inactive", [])}
 news = {}
 NEWS_DATE = ""
 if os.path.exists("injury_news.json"):
@@ -338,6 +351,15 @@ def timeline(pid, ro):
             label = "IR" if status.startswith("IR") else ("PUP" if "Physically" in status else "NFI")
             if "Expected Return" not in status and re.search(r"ACL|Achilles", injury):
                 cands.append((18, f"{injury}, no return timeline", "CBS Sports"))
+    # the NFL's own injury report for this week (nflverse): Out and Doubtful mean he misses this week's game,
+    # Questionable is a label (the start/sit chance he plays). Catches what the CBS pages don't have yet.
+    gs_rep = str(rep.loc[pid].report_status) if pid in rep.index and rep_wk == CUR_WEEK else ""
+    if gs_rep in ("Out", "Doubtful"):
+        cands.append((CUR_WEEK, f"{gs_rep.lower()} for week {CUR_WEEK} on the NFL injury report", "NFL injury report"))
+        if not label or label == "Questionable":
+            label = gs_rep
+    elif gs_rep == "Questionable" and not label:
+        label = "Questionable"
     if floor:
         cands.append(floor)  # after CBS, so CBS wins ties
     if nw:
@@ -352,18 +374,52 @@ def timeline(pid, ro):
     if thru is not None and thru >= 18:
         label, thru = "Out for season", 18
     elif thru is not None and label in ("IR", "PUP", "NFI"):
-        label = f"{label} · back wk {thru + 1}"
+        # back from a reserve list but on this week's report: the report is the news
+        label = gs_rep if src == "NFL injury report" else f"{label} · back wk {thru + 1}"
     if not label:
-        if pid in prac.index and prac.loc[pid].practice_status in PR:
+        if gs_rep == "Questionable":       # e.g. back from a reserve list and listed this week
+            label = "Questionable"
+        elif pid in prac.index and prac.loc[pid].practice_status in PR:
             label = f"{PR[prac.loc[pid].practice_status]} practice"
         elif pid in rep.index and rep_wk >= CUR_WEEK:
             label = str(rep.loc[pid].report_status)
     if ro.status == "EXE" and thru is None:
         thru, label, why, src = 18, "Exempt list", "on the commissioner's exempt list; no return timeline", "NFL transactions"
+    # game day: his team's inactives are out. Inactive = out this week; anyone else on the team is active, which
+    # settles a Questionable, Doubtful or Out tag for this week (not a reserve-list absence: those aren't listed)
+    if team in GAMEDAY and ro.status not in ("RES", "EXE"):
+        if name_key(full) in GAMEDAY[team]:
+            if thru is None or thru < CUR_WEEK:
+                thru, why, src = CUR_WEEK, "inactive for this week's game", "game-day inactives"
+            label = label if label.startswith(("IR", "PUP", "NFI", "Out for season")) else "Inactive"
+        elif thru == CUR_WEEK and label in ("Out", "Doubtful", "Questionable", ""):
+            thru, why, src, label = None, "", "", f"Active (was {label})" if label else "Active"
+        elif thru is None and label in ("Questionable", "Doubtful", "Out") or label.endswith("practice"):
+            label = f"Active (was {label})"
     if not label and thru is None:
         return None
     return {"thru": thru, "st": label, "inj": injury, "why": why, "src": src,
             "upd": nw.get("date", NEWS_DATE) if nw else ""}
+
+
+def week_status(pid, ro):
+    """This week's game status and last practice (start/sit chance he plays), and game-day active/inactive."""
+    team, pos, full = ro.team, ro.position, ro.full_name
+    out = {}
+    row = cbs.get((team, pos) + name_key(full))
+    m = re.search(r"(Questionable|Doubtful|Out) for Week (\d+)", row.status) if row is not None else None
+    if m and int(m.group(2)) == CUR_WEEK:
+        out["gs"] = m.group(1)
+    elif pid in rep.index and rep_wk == CUR_WEEK and str(rep.loc[pid].report_status) in ("Questionable", "Doubtful", "Out"):
+        out["gs"] = str(rep.loc[pid].report_status)
+    if pid in prac.index and prac_wk == CUR_WEEK:
+        pr = {"Full Participation in Practice": "Full", "Limited Participation in Practice": "Limited",
+              "Did Not Participate In Practice": "DNP"}.get(str(prac.loc[pid].practice_status))
+        if pr:
+            out["pr"] = pr
+    if team in GAMEDAY and ro.status not in ("RES", "EXE"):
+        out["gd"] = "inactive" if name_key(full) in GAMEDAY[team] else "active"
+    return out
 
 
 # ---------------- aging ----------------
@@ -820,6 +876,7 @@ for pid in ids:
         rec["lg"] = int(last_played[pid])
     if pid in ew_by:
         rec["ew"] = int(ew_by[pid])
+    rec.update(week_status(pid, ro))
     players.append(rec)
 
 # healthy-roster share per player (for display and filtering)
@@ -944,14 +1001,25 @@ FAAB_POOL = None
 if pools:
     FAAB_POOL = {k: {w: round(sum(p[k][w] for p in pools) / len(pools), 1) for w in pools[0][k]} for k in ("std", "ppr")}
 
+# this week's games: opponents (the start/sit simulation pairs teams that play each other) and kickoffs
+OPP_WK, KICK_WK = {}, {}
+for _r in g[g.week == CUR_WEEK].itertuples():
+    OPP_WK[_r.home_team], OPP_WK[_r.away_team] = _r.away_team, _r.home_team
+    try:
+        _k = pd.Timestamp(f"{_r.gameday} {_r.gametime}", tz="America/New_York").isoformat()
+    except Exception:
+        _k = None
+    KICK_WK[_r.home_team] = KICK_WK[_r.away_team] = _k
+
 matched_cbs = sum(1 for p in players if p.get("ij") and p["ij"]["src"] == "CBS Sports")
 out = {
-    "v": 5,
+    "v": 6,
     "asOf": f"{SEASON} Week {DONE_WEEK} stats (through {last_game_day})",
     "builtAt": pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
     "season": SEASON, "curWeek": CUR_WEEK, "doneWeek": DONE_WEEK, "lastWeek": LAST_WEEK, "rosWeek": ROS_WEEK,
     "sources": {"ros": ROS_DATE, "pre": PRE_DATE, "own": WK_DATE, "inj": NEWS_DATE},
-    "params": {"version": PARAMS_VERSION, "values": PRM, "annual": ANNUAL.get("version")}, "ewWeek": EW_WEEK, "rosN": ROS_N, "byes": byes, "weekDates": week_dates, "teams": team_out, "faabPool": FAAB_POOL, "players": players,
+    "params": {"version": PARAMS_VERSION, "values": PRM, "annual": ANNUAL.get("version")}, "ewWeek": EW_WEEK, "rosN": ROS_N, "byes": byes, "weekDates": week_dates, "teams": team_out, "faabPool": FAAB_POOL,
+    "opp": OPP_WK, "kick": KICK_WK, "gameday": {"at": GAMEDAY_AT, "teams": sorted(GAMEDAY)} if GAMEDAY else None, "players": players,
 }
 json.dump(out, open("db.json", "w"), separators=(",", ":"))
 print(len(players), "players;", len(json.dumps(out)) // 1024, "KB; current week", CUR_WEEK, "; timelines from CBS:", matched_cbs)
@@ -962,6 +1030,13 @@ if _envs:
 print("FAAB breakout pool (PPR points above startable, league-wide) from week:", {w: FAAB_POOL["ppr"][w] for w in list(FAAB_POOL["ppr"])[2:10]} if FAAB_POOL else None)
 unmatched = [k for k in cbs if not any((p["t"], p["p"]) + name_key(p["n"]) == k for p in players)]
 print("CBS rows not matched to a player in the data:", len(unmatched), unmatched)
+_q = [p for p in players if p.get("gs") == "Questionable"]
+print(f"this week's game status: {len(_q)} questionable, {sum(1 for p in players if p.get('gs') == 'Doubtful')} doubtful, "
+      f"{sum(1 for p in players if p.get('pr'))} with a practice report" + (f"; inactives posted for {len(GAMEDAY)} teams ({', '.join(sorted(GAMEDAY))}): "
+      f"{sum(1 for p in players if p.get('gd') == 'inactive')} of our players inactive" if GAMEDAY else ""))
+if GAMEDAY:
+    _un = [(t, n) for t, names in GAMEDAY.items() for n in names if not any(p["t"] == t and name_key(p["n"]) == n for p in players)]
+    print("  inactive names not in the player data (other positions or depth players; fine):", len(_un))
 for p in players:
     if p.get("ij") and p["ij"]["thru"] is not None and ("er" in p or p.get("own", 0) >= 20):
         print(f"  {p['n']:<24}{p['p']} {p['t']:<4} out thru {p['ij']['thru']:>2}{' new' if p['ij'].get('nx') else '    '}  {p['ij']['st']:<20} {p['ij']['why']} [{p['ij']['src']}]")

@@ -181,6 +181,7 @@ function accept(data) {
 }
 function resetUi() {
   ui.trade = { mine: "", partner: "", give: new Set(), get: new Set(), mg: 0, mr: 0 };
+  if (ui.ss) Object.assign(ui.ss, { mine: "", opp: "", res: null, resFor: null, cands: [], left: { mine: new Set(), theirs: new Set() }, calc: null, calcFor: null, board: null, boardFor: null });
   ui.finder.results = null; ui.finder.partners = new Set();
   ui.players.sel = ""; ui.confirm = "";
   ui.imp.input = state.espn ? String(state.espn.leagueId) : ui.imp.input;
@@ -928,7 +929,7 @@ function renderLeague() {
     <div class="grid cols-2" style="align-items:start">
       <div class="box stack">
         <h3>Player data</h3>
-        <p style="margin:0">Stats through <b>Week ${DB.doneWeek ?? DB.curWeek - 1}</b>, rebuilt ${DB.builtAt ? esc(new Date(DB.builtAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })) : ""}. A scheduled refresh rebuilds it every Tuesday morning after Monday night's game: new stats, the latest expert rankings and roster rates, and updated injury timelines.</p>
+        <p style="margin:0">Stats through <b>Week ${DB.doneWeek ?? DB.curWeek - 1}</b>, rebuilt ${DB.builtAt ? esc(new Date(DB.builtAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })) : ""}. A scheduled refresh rebuilds it every Tuesday morning after Monday night's game (new stats, the latest expert rankings and roster rates, updated injury timelines), and again before Thursday night's game and on Sunday morning after the 1 pm inactives, for the latest injury news.</p>
         <p class="notice" style="margin:0">Your league's rosters, injury designations, start and roster rates come from ESPN whenever you import, so re-import any time for the latest. Current week in this league: ${state.settings.curWeek}${+state.settings.curWeek < +DB.curWeek ? ` <span class="bad">(the data is on week ${DB.curWeek}; update it under Basics or re-import)</span>` : ""}.</p>
       </div>
       <div class="box stack">
@@ -1085,18 +1086,350 @@ P(accept) = 1 / (1 + e^−((felt − edge) / predictability))</div>
   <p>The latest of these wins. A torn ACL or Achilles on IR with no return date is treated as season-ending. Questionable players and midweek practice absences don't count as missed games. Players out two or more weeks also drop the expert consensus from their projection, because expert ranks already count missed games. If ESPN shows a player active after an import, that overrides an older timeline. Your own "Out thru" entries always win.</p>
   <h3>6. ESPN import</h3>
   <p>Paste a league ID or any ESPN league link and the page builds the request to ESPN's league API (settings, teams and rosters). It reads team names and owners, every roster, your scoring (including a TE reception bonus), your lineup slots, the current week, playoff weeks, IR and injury designations, and each player's ADP, PRK, roster %, start % and ESPN projection. A link that includes <code>teamId=</code> also tells it which team is yours. Re-importing keeps your own numbers, "Out thru" entries and settings.</p>
+  <h3>6b. Start/sit: floors, ceilings and the chance to win</h3>
+  <p>A projection is an average. Two players projected for 11 points can have very different weeks: one gets 18 carries and almost always lands between 7 and 16; the other needs a long catch or a touchdown and lands anywhere from 2 to 25. Start/Sit turns every projection into a whole distribution by simulating each game a few thousand times, built from the same expected stat line as the projection:</p>
+  <ul>
+    <li><b>The game.</b> A passing-environment shock both teams share (a shootout, or wind and rain, moves both passing games) and a script shock that splits them (the team that leads runs more; the one that trails throws more).</li>
+    <li><b>The team.</b> Its own swings in pass volume, rush volume and efficiency. Touchdowns move with efficiency.</li>
+    <li><b>The player.</b> His role that week (his share of carries and targets moves around, and when one back gets more work his teammate gets less), a small chance he leaves the game early (his teammates absorb the rest), and his own efficiency.</li>
+    <li><b>The plays.</b> Carries and targets are counted out (Poisson), catches come from targets, yards are the sum of the plays (each carry or catch with the spread measured from box scores: a carry's yards vary about 1.4 times their average, a receiver's catch about 0.8 times), and touchdowns, interceptions and fumbles are counted at their per-play rates.</li>
+    <li><b>The quarterback.</b> His passing line is his receivers' receiving line, so a QB and his receivers rise and fall together and stacking them adds variance.</li>
+  </ul>
+  <p>The spread of each piece was fitted on 2024–26 games replayed with the same projection model, so the simulated weeks look like real ones: actual scores fall below the simulated 10th, 50th and 90th percentiles about 10%, 50% and 90% of the time, and when the simulation says a player has a 30% chance of 15 points, about 30% of them get there. Trained on 2024 only and tested on 2025–26, it beat a role-blind version (past players with the same projection) on every position. The mean is calibrated to what really happened: our projection is tuned to the smallest average miss, which puts it between a player's median and his average, so the simulated average sits a few percent above it, mostly from touchdowns.</p>
+  <p><b>Injuries.</b> A player listed Questionable plays with the chance past Questionable regulars with the same final practice played (2023–25 injury reports): about 94% after a full practice, 75% after a limited one, 55% after missing practice, less if he missed his team's last game, and quarterbacks listed Questionable sit far more often. Doubtful players almost never play. When he sits, his work goes to his teammates in that simulated game. Once his team's inactives are out (90 minutes before kickoff) it's settled either way.</p>
+  <p><b>Chance to win.</b> Your starters' simulated points are added up in every simulated week and compared with your opponent's likely lineup; kickers and team defenses aren't modeled, so their usual week-to-week swing is added to both sides. The best lineup is found by swapping starters for bench players while the chance to win goes up. It usually matches the highest-projection lineup; it differs when a starter might not play, or when one player's range suits the matchup better: an underdog needs ceiling, a favorite needs floor.</p>
+  <p><b>Floor vs ceiling.</b> The calculator answers one decision: who gives you the best chance of the points you need (or, with the players still to play on both sides, the best chance to win). The chart shows each player's chance of at least x points; where two lines cross is the target at which the steadier player stops being the better bet.</p>
+  <p><b>What really sets a player's range.</b> His projection, his position, his game and the chance he sits. His style matters less than it looks: replaying 2024–26, players whose points lean on long plays and touchdowns had about the same week-to-week spread as volume players with the same projection (receivers who catch a high share of their targets were about 4% steadier, deep threats about 4% wilder, and even that didn't hold from one season to the next). At the same projection, running backs actually had a slightly higher floor and ceiling than receivers. So the high-volume back isn't capped: when you need 15, compare the chances, not the labels.</p>
+  <p class="notice">Not modeled yet: kickers and defenses (only as noise), opponent-specific matchups beyond the Vegas line, and live in-game scores (type the deficit yourself). In the backtest, a QB and his top receiver move together a little more in the simulation than in real games (0.45 vs 0.38), and opposing receivers a little less (0.05 vs 0.18).</p>
   <h3>Limits</h3>
   <p>Projections don't adjust for opponent strength. Kickers and defenses aren't included. A player new to the league since this data was built won't match on import until the data is refreshed. When you know something the data doesn't, type your own number on the Players tab.</p>
   <h3>7. Weekly updates</h3>
   <p>A scheduled task runs every Tuesday morning. It downloads the newest stats, rosters and schedule, the latest FantasyPros consensus and roster rates, reads every team's injury page, checks news on major injuries, rebuilds the player data and republishes this page at the same link. Your saved leagues and edits are untouched. The current week moves forward automatically.</p>
+  <p>Two more runs bring the injury news up to kickoff: Thursday evening after the Thursday game's inactives (about 6:45 pm ET), and Sunday morning after the 1 pm inactives (about 11:30 am ET), with the final injury reports, Saturday's activations and every game-day inactive posted so far. The NFL's own Out and Doubtful designations count as missed games even before a team's injury page catches up.</p>
   <p class="notice">Sources: nflverse weekly stats, rosters, injury reports and schedule (${esc(DB.asOf)}); CBS Sports team injury pages and news reports (injury timelines, ${esc(fmtDate(src.inj))}); FantasyPros expert consensus via DynastyProcess (rest of season ${esc(fmtDate(src.ros))}, preseason ${esc(fmtDate(src.pre))}, roster % ${esc(fmtDate(src.own))}); ESPN league data when you import.</p></div>`;
+}
+
+/* ---------------- START / SIT ---------------- */
+// Lineups are ranked by the chance to win the week (simulated games), not only by projected points; the
+// floor-vs-ceiling calculator answers "who gives me the best shot at the points I need?"
+ui.ss = { mine: "", opp: "", res: null, resFor: null, cands: [], need: 15, left: { mine: new Set(), theirs: new Set() }, kdst: false,
+  calc: null, calcFor: null, board: null, boardFor: null, bpos: "", bown: "mine", bsort: "p", showBoard: false };
+const SS_N = 4000, BOARD_N = 1500;
+const kickOf = (p) => (DB.kick && DB.kick[p.t]) || null;
+function kickTxt(p) {
+  const k = kickOf(p);
+  if (!k) return "";
+  const d = new Date(k);
+  return isNaN(d) ? "" : d.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+}
+function started(p) { const k = kickOf(p); return !!k && new Date(k).getTime() <= Date.now(); }
+function playTxt(pp) {
+  if (pp == null) return "";
+  const c = pp < 0.5 ? "low" : pp < 0.9 ? "mid" : "";
+  return `<span class="pplay ${c}" title="Chance he plays">${pp >= 0.995 ? "" : pct(pp)}</span>`;
+}
+function ssDefaults() {
+  const S = ui.ss;
+  if (!teamById(S.mine)) S.mine = (myTeam() || {}).id || "";
+  if (!teamById(S.opp) || S.opp === S.mine) {
+    // this week's ESPN matchup when the import has the schedule
+    const sch = (state.espn && state.espn.schedule) || [];
+    const m = sch.find((x) => +x.w === +state.settings.curWeek && (x.h === S.mine || x.a === S.mine));
+    S.opp = m ? (m.h === S.mine ? m.a : m.h) : ((state.teams.find((t) => t.id !== S.mine) || {}).id || "");
+  }
+}
+function rangeBar(sum, max, pos) {
+  if (!sum) return "";
+  const x = (v) => Math.max(0, Math.min(100, (v / max) * 100));
+  return `<div class="rbar" title="10th–90th percentile ${fmt(sum.p10)}–${fmt(sum.p90)}, middle half ${fmt(sum.p25)}–${fmt(sum.p75)}, median ${fmt(sum.p50)}" role="img" aria-label="Range ${fmt(sum.p10)} to ${fmt(sum.p90)}, median ${fmt(sum.p50)}">
+    <i class="r90 ${pos}" style="left:${x(sum.p10)}%;width:${Math.max(1, x(sum.p90) - x(sum.p10))}%"></i><i class="r50 ${pos}" style="left:${x(sum.p25)}%;width:${Math.max(1, x(sum.p75) - x(sum.p25))}%"></i><i class="med" style="left:calc(${x(sum.p50)}% - 1px)"></i></div>`;
+}
+/* His status this week as start/sit reads it (the same source as the chance he plays). */
+function ssTag(p) {
+  const st = weekStatus(ctx, p);
+  if (st.gs) {
+    const cls = /Out|Inactive|Doubtful/.test(st.gs) ? "ir" : st.gs === "Active" ? "soft" : "q";
+    return `<span class="tag ${cls}" title="${esc(pPlay(ctx, p).why || st.gs)}">${esc(st.gs)}</span>`;
+  }
+  const i = injInfo(p);
+  return i && i.eff != null ? injTag(p) : "";
+}
+/* Games already started: those players can't be moved. In or out comes from a this-week ESPN import when
+   there is one (its lineup slot), otherwise from the highest-projection lineup. */
+function lockedSets(team) {
+  const locked = team.roster.filter((id) => pl(id) && started(pl(id)));
+  const imp = state.espn && state.espn.importedAt, x = (id) => state.espn && state.espn.players && state.espn.players[id];
+  const thisWeek = imp && DB.weekDates && new Date(imp) >= new Date((DB.weekDates[state.settings.curWeek] || "2000-01-01") + "T00:00:00") - 3 * 864e5;
+  const lockedIn = thisWeek ? locked.filter((id) => x(id) && x(id).slot != null && x(id).slot !== 20 && x(id).slot !== 21) : null;
+  return { locked, lockedIn, fromEspn: !!thisWeek };
+}
+function ssCompute() {
+  const S = ui.ss, mine = teamById(S.mine), opp = teamById(S.opp);
+  if (!mine) return;
+  const t0 = performance.now();
+  const ids = mine.roster.concat(opp ? opp.roster : []);
+  const sim = simWeek(ctx, ids, { n: SS_N });
+  const lk = lockedSets(mine);
+  const res = startSit(ctx, mine, opp, { sim, locked: lk.locked, lockedIn: lk.lockedIn || [] });
+  res.lk = lk;
+  // spread of each lineup's total, for the score line
+  const tot = (idList) => { const a = new Float64Array(sim.n); for (const id of idList) { const x = sim.pts.get(id); if (x) for (let s = 0; s < sim.n; s++) a[s] += x[s]; } return distSummary(a, 0); };
+  res.myTot = tot(res.best.ids); res.oppTot = tot(res.opp);
+  res.sum = new Map([...sim.pts].map(([id, a]) => [id, distSummary(a, sim.inp.get(id).proj)]));
+  res.ms = Math.round(performance.now() - t0);
+  S.res = res; S.resFor = { ctx, mine: mine.id, opp: opp ? opp.id : "" };
+  // calculator defaults: the flex starter and the best bench options at flex positions
+  if (!S.cands.length || S.cands.some((id) => !mine.roster.includes(id))) {
+    const flexy = (id) => ["RB", "WR", "TE"].includes((pl(id) || {}).p) && res.sum.has(id) && !started(pl(id));
+    const start = res.best.lineup.filter((x) => ["FLEX", "RBWR", "WRTE", "OP"].includes(x.slot) && flexy(x.id)).map((x) => x.id);
+    const bench = mine.roster.filter((id) => flexy(id) && !res.best.ids.includes(id)).sort((a, b) => res.sum.get(b).mean - res.sum.get(a).mean);
+    S.cands = start.concat(bench).slice(0, 3);
+  }
+}
+function ssStale() {
+  const S = ui.ss, f = S.resFor;
+  return !S.res || !f || f.ctx !== ctx || f.mine !== S.mine || f.opp !== S.opp;
+}
+/* Why the win-probability lineup differs from the projection lineup, in a sentence per swap. */
+function swapReasons(res) {
+  const out = [], P = res.proj.ids, B = res.best.ids;
+  const ins = B.filter((id) => !P.includes(id)), outs = P.filter((id) => !B.includes(id));
+  const under = res.myTot.mean < res.oppTot.mean;
+  ins.forEach((inId, i) => {
+    const outId = outs[i];
+    if (!outId) return;
+    const a = res.sum.get(inId), b = res.sum.get(outId), pa = res.sim.inp.get(inId).pplay, pb = res.sim.inp.get(outId).pplay;
+    let why;
+    if (pb < 0.85 && pa > pb + 0.1) why = `${esc(pl(outId).n)} plays only ${pct(pb)} of the time (${esc(pPlay(ctx, pl(outId)).why)}); ${esc(pl(inId).n)} ${pa >= 0.97 ? "is expected to play" : "is likelier to play"}`;
+    else if (under && a.p90 > b.p90) why = `you're the underdog (projected ${fmt(res.myTot.mean, 0)}–${fmt(res.oppTot.mean, 0)}), and his ceiling (${fmt(a.p90)} at the 90th percentile vs ${fmt(b.p90)}) matters more than ${esc(pl(outId).n)}'s steadier floor`;
+    else if (!under && a.p10 > b.p10) why = `you're favored, so his floor (${fmt(a.p10)} at the 10th percentile vs ${fmt(b.p10)}) is worth more than a little extra projection`;
+    else why = `his week moves with the rest of your lineup and theirs in a way that helps (same game or offense)`;
+    out.push(`Start <b>${esc(pl(inId).n)}</b> over <b>${esc(pl(outId).n)}</b>: ${why}.`);
+  });
+  return out;
+}
+function matchupHTML() {
+  const S = ui.ss, res = S.res, mine = teamById(S.mine), opp = teamById(S.opp);
+  if (!res) return `<div class="empty">Simulating ${SS_N.toLocaleString()} games…</div>`;
+  const all = [...res.best.ids, ...res.opp].map((id) => res.sum.get(id)).filter(Boolean);
+  const mx = Math.max(10, ...all.map((x) => x.p90)) * 1.05;
+  const delta = res.best.p - res.proj.p;
+  const rowFor = (id, slot, cls = "", alt = null) => {
+    const p = pl(id), sm = res.sum.get(id), x = res.sim.inp.get(id);
+    if (!p || !sm) return "";
+    const st = started(p);
+    return `<tr class="${cls}${st ? " locked" : ""}"><td class="slot-lab">${slot ? esc(SLOT_LABEL[slot] || slot) : "Bench"}</td>
+      <td><span class="chip ${p.p}">${p.p}</span> <span class="pname">${esc(p.n)}</span> ${ssTag(p)}<div class="sub">${p.t} · ${st ? "locked: game started" : esc(kickTxt(p))}</div></td>
+      <td class="n">${playTxt(x.pplay)}</td><td class="n">${fmt(x.proj)}</td><td class="n">${fmt(sm.p10)}</td><td class="n">${fmt(sm.p50)}</td><td class="n">${fmt(sm.p90)}</td>
+      <td style="min-width:110px">${rangeBar(sm, mx, p.p)}</td>
+      <td class="n">${alt ? `<span title="${esc(alt.title)}">${alt.txt}</span>` : ""}</td></tr>`;
+  };
+  const altFor = (id) => {
+    const a = res.alts.find((x) => x.id === id);
+    if (a && a.locked) return { txt: "locked", title: "His game has started" };
+    if (!a || !a.alts.length) return null;
+    const b = a.alts[0];
+    return { txt: `${esc(pl(b.id).n.split(" ").slice(-1)[0])} ${sgn((b.p - a.p) * 100, 0)}%`, title: `Starting ${pl(b.id).n} instead: ${pct(b.p)} to win` };
+  };
+  const bench = mine.roster.filter((id) => !res.best.ids.includes(id) && res.sum.has(id)).sort((a, b) => res.sum.get(b).mean - res.sum.get(a).mean);
+  const out = mine.roster.filter((id) => pl(id) && !res.sum.has(id));
+  const reasons = swapReasons(res);
+  if (res.lk && res.lk.locked.length) reasons.push(`Already playing or played: ${res.lk.locked.map((id) => esc(pl(id).n)).join(", ")}. ${res.lk.fromEspn ? "They stay where your ESPN lineup had them at import" : "They stay where the highest-projection lineup puts them (import from ESPN this week to use your real lineup)"}; their numbers are pre-game, so for the rest of the week use the calculator below with the score so far.`);
+  const oppRows = res.opp.map((id) => rowFor(id, "", "")).join("");
+  const espnSch = !!(state.espn && state.espn.schedule);
+  return `<div class="metric-grid" style="margin-bottom:12px">
+      <div class="metric"><span class="label">Chance to win, best lineup</span><span class="big">${pct(res.best.p)}</span><div class="meter"><i style="width:${Math.round(res.best.p * 100)}%"></i></div><span class="note">${Math.abs(delta) >= 0.005 ? `${sgn(delta * 100, 0)} points over the highest-projection lineup (${pct(res.proj.p)})` : "the highest-projection lineup is already the best"}</span></div>
+      <div class="metric"><span class="label">Projected score</span><span class="big">${fmt(res.myTot.mean, 0)} <span class="muted">–</span> ${fmt(res.oppTot.mean, 0)}</span><span class="note">You ${fmt(res.myTot.p10, 0)}–${fmt(res.myTot.p90, 0)}, ${esc(opp ? opp.name : "them")} ${fmt(res.oppTot.p10, 0)}–${fmt(res.oppTot.p90, 0)} (10th–90th percentile)</span></div>
+      <div class="metric"><span class="label">Not modeled</span><span class="big">±${fmt(res.kd / Math.SQRT2, 0)}</span><span class="note">Kickers and defenses: their usual swing is added to both sides, so a lopsided matchup still isn't a lock.</span></div>
+    </div>
+    ${reasons.length ? `<div class="callout stack" style="gap:4px;margin-bottom:12px">${reasons.map((r) => `<div>${r}</div>`).join("")}</div>` : ""}
+    <div class="tablewrap"><table>
+      <thead><tr><th>Slot</th><th>Player</th><th class="n" title="Chance he plays (injury designation, last practice)">Plays</th><th class="n" title="Our projection if he plays">Proj</th><th class="n" title="10th percentile: a bad week">Floor</th><th class="n" title="Median: half his weeks are above">Median</th><th class="n" title="90th percentile: a big week">Ceiling</th><th>Range</th><th class="n" title="Best bench option for this spot and how it changes your chance to win">Next best</th></tr></thead>
+      <tbody>${res.best.lineup.map((x) => rowFor(x.id, x.slot, res.proj.ids.includes(x.id) ? "" : "swap-in", altFor(x.id))).join("")}
+      ${bench.map((id) => rowFor(id, "", "bench")).join("")}
+      ${out.length ? `<tr class="bench"><td class="slot-lab">Out</td><td colspan="8" class="sub" style="white-space:normal">${out.map((id) => esc(pl(id).n)).join(", ")}</td></tr>` : ""}</tbody></table></div>
+    <details style="margin-top:12px"><summary class="label" style="cursor:pointer">${esc(opp ? opp.name : "Opponent")}'s likely lineup</summary>
+      <div class="tablewrap"><table><tbody>${oppRows}</tbody></table></div>
+      <p class="notice" style="margin:6px 0 0">Assumed: their highest-projection lineup, sitting players unlikely to play.</p></details>
+    <p class="notice" style="margin:10px 0 0">Floor, median and ceiling are the 10th, 50th and 90th percentile of ${SS_N.toLocaleString()} simulated games (they include the chance he doesn't play). Green rows are changes from the highest-projection lineup.${espnSch ? "" : " Re-import from ESPN to pick this week's opponent automatically."} ${res.ms ? `(${res.ms} ms)` : ""}</p>`;
+}
+/* ---- floor vs ceiling calculator */
+function calcStale() {
+  const S = ui.ss, f = S.calcFor;
+  return !S.calc || !f || f.ctx !== ctx || f.key !== JSON.stringify([S.cands, S.need, [...S.left.mine], [...S.left.theirs], S.kdst]);
+}
+function calcCompute() {
+  const S = ui.ss;
+  if (!S.cands.length) { S.calc = []; S.calcFor = null; return; }
+  S.calc = needCalc(ctx, S.cands, { need: S.need, mine: [...S.left.mine], theirs: [...S.left.theirs], kdst: S.kdst, n: 6000 });
+  S.calcFor = { ctx, key: JSON.stringify([S.cands, S.need, [...S.left.mine], [...S.left.theirs], S.kdst]) };
+}
+const SER = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)"];
+function survivalSVG(rows, need) {
+  const W = 640, H = 250, L = 40, R = 14, T = 12, B = 30;
+  const xmax = Math.max(need + 8, ...rows.map((r) => r.sum ? r.sum.sorted[Math.floor(r.sum.sorted.length * 0.985)] : 0)) * 1.05;
+  const X = (v) => L + (v / xmax) * (W - L - R), Y = (p) => T + (1 - p) * (H - T - B);
+  const step = xmax / 120;
+  let paths = "", dots = "", grid = "";
+  for (const p of [0, 0.25, 0.5, 0.75, 1]) grid += `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(p)}" y2="${Y(p)}"/><text x="${L - 6}" y="${Y(p) + 4}" text-anchor="end">${Math.round(p * 100)}%</text>`;
+  const tick = xmax > 45 ? 10 : 5;
+  for (let v = 0; v <= xmax; v += tick) grid += `<text x="${X(v)}" y="${H - B + 16}" text-anchor="middle">${v}</text>`;
+  const labs = [];
+  rows.forEach((r, i) => {
+    if (!r.sum) return;
+    let d = "";
+    for (let v = 0; v <= xmax + 1e-9; v += step) d += `${d ? "L" : "M"}${X(v).toFixed(1)},${Y(r.sum.ge(v)).toFixed(1)}`;
+    paths += `<path d="${d}" fill="none" stroke="${SER[i]}" stroke-width="2" stroke-linejoin="round"/>`;
+    const pn = r.sum.ge(need);
+    labs.push({ i, y: Y(pn), p: pn });
+  });
+  // direct labels at the target line, nudged apart so they don't collide
+  // stack from the bottom up so no label drops below the axis
+  labs.sort((a, b) => b.y - a.y);
+  labs[0] && (labs[0].y = Math.min(labs[0].y, Y(0) - 6));
+  for (let k = 1; k < labs.length; k++) if (labs[k - 1].y - labs[k].y < 13) labs[k].y = labs[k - 1].y - 13;
+  for (const l of labs) dots += `<circle cx="${X(need)}" cy="${Y(l.p)}" r="4" fill="${SER[l.i]}" stroke="var(--surface)" stroke-width="2"/><text x="${X(need) + 8}" y="${l.y + 4}" class="needlab">${Math.round(l.p * 100)}%</text>`;
+  return `<svg class="ss-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Chance each player scores at least x points">
+    ${grid}<line class="axis" x1="${L}" x2="${W - R}" y1="${Y(0)}" y2="${Y(0)}"/>
+    <text x="${(L + W - R) / 2}" y="${H - 2}" text-anchor="middle">points</text>
+    ${paths}<line class="need" x1="${X(need)}" x2="${X(need)}" y1="${T}" y2="${Y(0)}"/><text x="${X(need) - 6}" y="${T + 10}" text-anchor="end" class="needlab">need ${fmt(need, need % 1 ? 1 : 0)}</text>
+    ${dots}<line class="xh" id="ssXh" x1="0" x2="0" y1="${T}" y2="${Y(0)}" style="display:none"/>
+    <rect id="ssHit" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" fill="transparent" data-xmax="${xmax}" data-l="${L}" data-r="${R}" data-w="${W}"/></svg>`;
+}
+function calcHTML() {
+  const S = ui.ss, mine = teamById(S.mine), opp = teamById(S.opp), res = S.res;
+  if (!mine) return "";
+  const avail = mine.roster.filter((id) => pl(id) && ctx.val.get(id) && ctx.val.get(id).avail[0] && !started(pl(id))).sort((a, b) => ctx.wkA.get(b)[0] - ctx.wkA.get(a)[0]);
+  const chip = (id, on, act, extra = "") => `<button class="pchip ${on ? "on" : ""}" data-act="${act}" data-id="${id}" ${extra} aria-pressed="${on}"><span class="chip ${pl(id).p}" style="min-width:24px">${pl(id).p}</span> ${esc(pl(id).n)}</button>`;
+  const rows = S.calc || [];
+  const best = rows.length ? rows.reduce((a, b) => (b.p > a.p ? b : a)) : null;
+  const topProj = rows.length ? rows.reduce((a, b) => ((b.sum ? b.sum.mean : 0) > (a.sum ? a.sum.mean : 0) ? b : a)) : null;
+  const others = S.left.mine.size || S.left.theirs.size || S.kdst;
+  const what = others ? "chance to win" : `chance of ${fmt(S.need, S.need % 1 ? 1 : 0)}+`;
+  let insight = "";
+  if (best && topProj && rows.length > 1) {
+    if (best.id !== topProj.id && best.p > topProj.p + 0.01) insight = `<b>${esc(pl(best.id).n)}</b> gives you the best shot (${pct(best.p)} vs ${pct(topProj.p)}) even though <b>${esc(pl(topProj.id).n)}</b> scores more on average: ${others ? "you need a big week" : "the target is above both players' typical week"}, and ${esc(pl(best.id).n)} has more of his outcomes up there.`;
+    else if (best.id === topProj.id) insight = `<b>${esc(pl(best.id).n)}</b> is the start either way: highest average and the best ${what} (${pct(best.p)}).`;
+    else insight = `It's close: ${rows.map((r) => `${esc(pl(r.id).n)} ${pct(r.p)}`).join(", ")}.`;
+  }
+  const starters = res ? res.best.ids : [];
+  return `<div class="stack">
+    <div class="field"><span class="label">Players to compare <span class="notice" style="text-transform:none;letter-spacing:0;font-family:var(--body)">· up to 4 · ${S.cands.length} picked</span></span>
+      <div class="row" style="gap:6px">${avail.map((id) => chip(id, S.cands.includes(id), "ssCand")).join("")}</div></div>
+    <div class="row" style="align-items:end">
+      <label class="field"><span class="label">Points you need</span><input type="number" id="ssNeed" step="0.5" min="-100" max="200" value="${S.need}" data-act="ssNeed" style="width:6em"><span class="hint">How far behind you are (negative if ahead)</span></label>
+      <label class="row" style="gap:6px;padding-bottom:22px"><input type="checkbox" id="ssKd" data-act="ssKd" ${S.kdst ? "checked" : ""}>Kickers and defenses still to play</label>
+    </div>
+    <details ${S.left.mine.size || S.left.theirs.size ? "open" : ""}><summary class="label" style="cursor:pointer">Other players still to play (optional)</summary>
+      <div class="stack" style="margin-top:8px">
+        <div class="field"><span class="hint">Yours, besides the spot you're deciding</span><div class="row" style="gap:6px">${starters.filter((id) => !S.cands.includes(id)).map((id) => chip(id, S.left.mine.has(id), "ssLeftMine")).join("") || '<span class="notice">Run the matchup above first.</span>'}</div></div>
+        <div class="field"><span class="hint">${esc(opp ? opp.name : "Theirs")}</span><div class="row" style="gap:6px">${(res ? res.opp : []).map((id) => chip(id, S.left.theirs.has(id), "ssLeftTheirs")).join("")}</div></div>
+        <p class="notice" style="margin:0">With nobody else left, it's simply the chance he scores more than you need. Add the players still to play on both sides (and the deficit on the scoreboard) to get the chance to win.</p>
+      </div></details>
+    ${rows.length ? `<div class="ss-viz">
+      <div class="tablewrap"><table class="mini"><thead><tr><th>Player</th><th class="n">${others ? "Win" : "Reach"}</th><th class="n">Plays</th><th class="n">Proj</th><th class="n">Floor</th><th class="n">Median</th><th class="n">Ceiling</th></tr></thead>
+        <tbody>${rows.map((r, i) => `<tr><td><span class="ss-key" style="color:${SER[i]}"></span><span class="pname">${esc(pl(r.id).n)}</span> <span class="sub">${pl(r.id).p} ${pl(r.id).t}</span></td><td class="n"><b>${pct(r.p)}</b></td><td class="n">${playTxt(r.pplay)}</td><td class="n">${r.sum ? fmt(ctx.wkA.get(r.id)[0]) : "–"}</td><td class="n">${r.sum ? fmt(r.sum.p10) : "–"}</td><td class="n">${r.sum ? fmt(r.sum.p50) : "–"}</td><td class="n">${r.sum ? fmt(r.sum.p90) : "–"}</td></tr>`).join("")}</tbody></table></div>
+      ${insight ? `<p style="margin:10px 0">${insight}</p>` : ""}
+      <div style="position:relative">${survivalSVG(rows, S.need)}<div class="ss-tip" id="ssTip"></div></div>
+      <p class="notice" style="margin:4px 0 0">Each line is the chance he scores at least that many points this week. Where the lines cross is where the steadier player stops being the better bet: below it, take the higher floor; above it, the higher ceiling.</p>
+    </div>` : `<div class="empty">Pick two or more players to compare.</div>`}
+  </div>`;
+}
+/* ---- boom/bust board */
+function boardStale() { const f = ui.ss.boardFor; return !ui.ss.board || !f || f.ctx !== ctx; }
+function boardCompute() {
+  const sim = simWeek(ctx, [], { n: BOARD_N, allTeams: true, seed: 99 });
+  const rows = [];
+  for (const [id, a] of sim.pts) {
+    const x = sim.inp.get(id);
+    if (!x || x.proj < 1) continue;
+    rows.push({ id, pos: x.pos, proj: x.proj, pplay: x.pplay, sum: distSummary(a, x.proj) });
+  }
+  ui.ss.board = rows; ui.ss.boardFor = { ctx };
+}
+function boardHTML() {
+  const S = ui.ss;
+  if (!S.board) return `<div class="empty">Simulating every game…</div>`;
+  const mine = teamById(S.mine);
+  let rows = S.board.filter((r) => (!S.bpos || r.pos === S.bpos) && (S.bown === "all" || (S.bown === "mine" ? mine && mine.roster.includes(r.id) : !owner.has(r.id))));
+  const key = { p: (r) => r.proj, c: (r) => r.sum.p90, f: (r) => r.sum.p10, boom: (r) => r.sum.boom, play: (r) => r.pplay };
+  rows.sort((a, b) => key[S.bsort](b) - key[S.bsort](a));
+  rows = rows.slice(0, 80);
+  const mx = Math.max(10, ...rows.map((r) => r.sum.p90)) * 1.05;
+  const th = (k, l, title) => `<th class="n sortable" data-act="ssBsort" data-k="${k}" title="${esc(title)}">${l}${S.bsort === k ? " ↓" : ""}</th>`;
+  return `<div class="row" style="margin-bottom:8px">
+      <select id="ssBpos" data-act="ssBpos"><option value="">All positions</option>${POSITIONS.map((x) => `<option ${S.bpos === x ? "selected" : ""}>${x}</option>`).join("")}</select>
+      <select id="ssBown" data-act="ssBown"><option value="mine" ${S.bown === "mine" ? "selected" : ""}>My team</option><option value="fa" ${S.bown === "fa" ? "selected" : ""}>Free agents</option><option value="all" ${S.bown === "all" ? "selected" : ""}>Everyone</option></select>
+    </div>
+    <div class="tablewrap"><table><thead><tr><th>Player</th>${th("p", "Proj", "Our projection if he plays")}${th("play", "Plays", "Chance he plays")}${th("f", "Floor", "10th percentile: a bad week")}<th class="n">Median</th>${th("c", "Ceiling", "90th percentile: a big week")}${th("boom", "Boom", "Chance of 1.5x his projection or more")}<th class="n" title="Chance of less than half his projection">Bust</th><th>Range</th></tr></thead>
+      <tbody>${rows.map((r) => { const p = pl(r.id); return `<tr><td><span class="chip ${p.p}">${p.p}</span> <span class="pname">${esc(p.n)}</span> ${ssTag(p)}<div class="sub">${p.t} · ${started(p) ? "game started" : esc(kickTxt(p))}</div></td>
+        <td class="n">${fmt(r.proj)}</td><td class="n">${playTxt(r.pplay) || '<span class="muted">✓</span>'}</td><td class="n">${fmt(r.sum.p10)}</td><td class="n">${fmt(r.sum.p50)}</td><td class="n">${fmt(r.sum.p90)}</td><td class="n">${pct(r.sum.boom)}</td><td class="n">${pct(r.sum.bust)}</td>
+        <td style="min-width:110px">${rangeBar(r.sum, mx, p.p)}</td></tr>`; }).join("") || `<tr><td colspan="9" class="muted">No players here this week.</td></tr>`}</tbody></table></div>
+    <p class="notice" style="margin:8px 0 0">What moves a player's range is his projection, his position, his game and the chance he sits. His style matters much less than it seems: in 13,700 past player-games, receivers who live on long catches and touchdowns had about the same spread as possession receivers with the same projection, and the same held for backs (differences under 5%, and not stable from season to season). So a "safe" player isn't the better start just for being steady; compare the chances of the points you need above. Boom is a week of 1.5 times his projection or more, bust under half of it (both include the chance he sits).</p>`;
+}
+function renderStartSit() {
+  const el = $("#panel-startsit");
+  if (state.teams.length < 1) { el.innerHTML = `<h2>Start/Sit</h2><p class="lede">Ranks lineups by your chance to win the week, and shows every player's floor and ceiling.</p>` + emptyLeague(); return; }
+  ssDefaults();
+  const S = ui.ss, opts = (sel, skip) => state.teams.filter((t) => t.id !== skip).map((t) => `<option value="${t.id}" ${t.id === sel ? "selected" : ""}>${esc(t.name)}${t.mine ? " (mine)" : ""}</option>`).join("");
+  const gd = DB.gameday && DB.gameday.teams && DB.gameday.teams.length ? ` Game-day inactives are in for ${DB.gameday.teams.join(", ")}.` : "";
+  const built = DB.builtAt ? new Date(DB.builtAt).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  el.innerHTML = `${exampleBanner()}<h2>Start/Sit · Week ${state.settings.curWeek}</h2>
+    <p class="lede">Every player's week is simulated a few thousand times from his projection: how his team's game goes, how much work he gets, how the plays break, and the chance he sits if he's hurt. That gives a floor and a ceiling, and it lets lineups be ranked by what you actually want: the chance to win this week. Injury news as of ${esc(built)}.${gd} The data refreshes before Thursday night's game and on Sunday morning after the 1 pm inactives.</p>
+    <div class="box stack" style="margin-bottom:14px">
+      <div class="ss-head"><label class="field"><span class="label">Your team</span><select id="ssMine" data-act="ssMine">${opts(S.mine, "")}</select></label><span class="ss-vs">vs</span>
+        <label class="field"><span class="label">Opponent</span><select id="ssOpp" data-act="ssOpp">${opts(S.opp, S.mine)}</select></label></div>
+      <div id="ssMatch">${matchupHTML()}</div>
+    </div>
+    <div class="box stack" style="margin-bottom:14px">
+      <div><h3>Floor vs ceiling: who gets you the points you need?</h3><p class="notice" style="margin:4px 0 0">A steady player is the better start when you only need a normal week; when you need a big one, the player with more big weeks can be the better bet even with a lower projection. Set how many points you need and compare.</p></div>
+      <div id="ssCalc">${calcHTML()}</div>
+    </div>
+    <div class="box stack">
+      <div class="row"><h3>Floors and ceilings, every player</h3><span class="spacer"></span>${S.showBoard ? "" : `<button class="btn" data-act="ssBoard">Show the board</button>`}</div>
+      <p class="notice" style="margin:0">Each player's bad week, typical week and big week, for your roster, the free agents or everyone. Sort by ceiling to find the best shot at a big week.</p>
+      <div id="ssBoardBox">${S.showBoard ? boardHTML() : ""}</div>
+    </div>`;
+  // heavy work after the frame is on screen
+  if (ssStale()) setTimeout(() => { if (tab !== "startsit") return; ssCompute(); calcCompute(); if (tab === "startsit") renderStartSit(); }, 30);
+  else if (calcStale()) setTimeout(() => { if (tab !== "startsit") return; calcCompute(); const c = $("#ssCalc"); if (c) { c.innerHTML = calcHTML(); bindChart(); } }, 0);
+  if (S.showBoard && boardStale()) setTimeout(() => { if (tab !== "startsit") return; boardCompute(); const b = $("#ssBoardBox"); if (b) b.innerHTML = boardHTML(); }, 60);
+  bindChart();
+}
+/* Crosshair on the survival chart: every candidate's chance of at least x points, at the hovered x. */
+function bindChart() {
+  const hit = $("#ssHit"), tip = $("#ssTip"), xh = $("#ssXh");
+  if (!hit || !tip || !ui.ss.calc) return;
+  const svg = hit.ownerSVGElement, xmax = +hit.dataset.xmax, L = +hit.dataset.l, R = +hit.dataset.r, W = +hit.dataset.w;
+  const show = (clientX) => {
+    const r = svg.getBoundingClientRect(), sx = (clientX - r.left) / r.width * W;
+    const v = Math.max(0, Math.min(xmax, Math.round(((sx - L) / (W - L - R)) * xmax)));
+    const px = L + (v / xmax) * (W - L - R);
+    xh.setAttribute("x1", px); xh.setAttribute("x2", px); xh.style.display = "";
+    tip.textContent = "";
+    const head = document.createElement("div"); head.className = "label"; head.textContent = `${v}+ points`; tip.appendChild(head);
+    ui.ss.calc.forEach((c, i) => {
+      if (!c.sum) return;
+      const row = document.createElement("div"); row.className = "row";
+      const k = document.createElement("span"); k.className = "ss-key"; k.style.color = SER[i];
+      const b = document.createElement("b"); b.textContent = pct(c.sum.ge(v));
+      const n = document.createElement("span"); n.textContent = pl(c.id).n;
+      row.append(k, b, n); tip.appendChild(row);
+    });
+    tip.style.display = "block";
+    const left = (px / W) * r.width;
+    tip.style.left = Math.min(r.width - tip.offsetWidth, Math.max(0, left + 10)) + "px";
+    tip.style.top = "8px";
+  };
+  hit.addEventListener("pointermove", (e) => show(e.clientX));
+  hit.addEventListener("pointerleave", () => { tip.style.display = "none"; xh.style.display = "none"; });
 }
 
 /* ---------------- render + events ---------------- */
 function render() {
   document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === tab ? "true" : "false"));
   document.querySelectorAll(".panel").forEach((p) => (p.hidden = p.id !== "panel-" + tab));
-  ({ trade: renderTrade, finder: renderFinder, teams: renderTeams, players: renderPlayers, league: renderLeague, method: renderMethod })[tab]();
+  ({ trade: renderTrade, finder: renderFinder, startsit: renderStartSit, teams: renderTeams, players: renderPlayers, league: renderLeague, method: renderMethod })[tab]();
 }
 function setPath(obj, path, v) {
   const ks = path.split(".");
@@ -1160,6 +1493,16 @@ document.addEventListener("click", (ev) => {
       tab = "trade"; render(); window.scrollTo({ top: 0 }); break;
     }
     case "runFinder": runFinder(); break;
+    case "ssCand": {
+      const S = ui.ss, id = t.dataset.id;
+      if (S.cands.includes(id)) S.cands = S.cands.filter((x) => x !== id);
+      else { S.cands = S.cands.concat([id]).slice(-4); S.left.mine.delete(id); }
+      renderStartSit(); break;
+    }
+    case "ssLeftMine": { const s = ui.ss.left.mine, id = t.dataset.id; s.has(id) ? s.delete(id) : s.add(id); renderStartSit(); break; }
+    case "ssLeftTheirs": { const s = ui.ss.left.theirs, id = t.dataset.id; s.has(id) ? s.delete(id) : s.add(id); renderStartSit(); break; }
+    case "ssBoard": ui.ss.showBoard = true; renderStartSit(); break;
+    case "ssBsort": ui.ss.bsort = t.dataset.k; { const b = $("#ssBoardBox"); if (b) b.innerHTML = boardHTML(); } break;
     case "fpart": { const F = ui.finder, id = t.dataset.team; F.partners.has(id) ? F.partners.delete(id) : F.partners.add(id); F.results = null; renderFinder(); break; }
     case "fpartAll": ui.finder.partners = new Set(); ui.finder.results = null; renderFinder(); break;
     case "fpartLosing": ui.finder.partners = new Set(state.teams.filter((x) => !x.mine && teamMood(x) > 0.2).map((x) => x.id)); ui.finder.results = null; renderFinder(); break;
@@ -1262,6 +1605,12 @@ document.addEventListener("change", (ev) => {
       state.settings.scoring = { ...DEFAULT_SETTINGS.scoring, rec: PRESETS[t.value].rec, byPos: {} };
       ui.finder.results = null; changed(); break;
     }
+    case "ssMine": ui.ss.mine = t.value; ui.ss.cands = []; ui.ss.left = { mine: new Set(), theirs: new Set() }; if (ui.ss.opp === t.value) ui.ss.opp = ""; renderStartSit(); break;
+    case "ssOpp": ui.ss.opp = t.value; ui.ss.left.theirs = new Set(); renderStartSit(); break;
+    case "ssNeed": { const v = +t.value; if (isFinite(v)) { ui.ss.need = v; renderStartSit(); } break; }
+    case "ssKd": ui.ss.kdst = t.checked; renderStartSit(); break;
+    case "ssBpos": ui.ss.bpos = t.value; { const b = $("#ssBoardBox"); if (b) b.innerHTML = boardHTML(); } break;
+    case "ssBown": ui.ss.bown = t.value; { const b = $("#ssBoardBox"); if (b) b.innerHTML = boardHTML(); } break;
     case "ppos": ui.players.pos = t.value; renderPlayers(); break;
     case "pown": ui.players.own = t.value; renderPlayers(); break;
   }

@@ -40,3 +40,28 @@ ledger/experiments.jsonl for the adoption (that run's other experiment rows are 
 rebuilt from the same published page with its original freeze time (`freeze --now`), which reproduces exactly what
 that page showed; the FantasyPros snapshot is the one DynastyProcess had at that time. Runbooks now check that the
 push landed.
+
+## 2026-10-17 — structural (projections unchanged): start/sit distributions, NFL injury report, pre-kickoff refreshes
+
+Asked for by the user: a start/sit tool on the weekly points model and a floor-vs-ceiling tool, refreshed with the
+best injury news right before Thursday night and Sunday games.
+- Weekly points distributions: a simulation of each game on the projection's own expected stat line (shared
+  passing environment and script, team volume and efficiency, role shocks re-split inside the team, early exits,
+  Poisson plays, gamma yards with per-play spread measured from box scores, a QB's passing = his receivers'
+  receiving). `dist/` (reference simulation, fit, checks), `params/dist.json` v1, engine `simWeek` / `startSit` /
+  `needCalc`, page tab Start/Sit, `docs/start-sit.md`. Holdout (fit 2024, test 2025-26): CRPS 3.654 vs 3.700 for a
+  role-blind baseline, better at every position and in standard scoring (not fitted on); actual scores below the
+  simulated 10/50/90th percentiles 9.4/52.4/90.2% of the time. Chance he plays from 2023-25 injury reports
+  (Questionable: 94% full practice, 75% limited, 55% none; QBs far lower). Finding: at the same position and
+  projection, usage style doesn't reliably change a player's real spread (under 5%), so the page shows floors and
+  ceilings but no "high floor / high ceiling" labels. Projections unchanged: neutral check OK (13,701 player-weeks,
+  max difference 0.00005); `data/backtest/champion.*` refreshed for parameters v3.
+- Builder (db v6): this week's game status `gs`, last practice `pr`, game-day `gd` from a new `gameday.json`
+  (inactives), `DB.opp`, `DB.kick`, `DB.gameday`. The NFL's own Out and Doubtful designations for the current week
+  now count as missing the game even without a CBS row (news, not formula: the backtest takes availability from
+  who played). Every existing field identical otherwise (checked on the Oct 17 build).
+- Scorecard: several pre-kickoff snapshots per week (`freeze --tag late-thu|late-sun|...`); the "late" view uses,
+  for each player, the latest snapshot frozen before his kickoff.
+- Runbooks: `gameday.md` (Thursday ~6:52 pm and Sunday ~11:37 am ET, after inactives) replaces the Saturday run;
+  `weekly.md` recalibrates the distribution means after the improvement loop (5b) and checks the push landed;
+  `annual-refit.md` refits the distributions (7b).

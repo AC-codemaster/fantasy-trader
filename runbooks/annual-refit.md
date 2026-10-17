@@ -40,6 +40,13 @@ H = the most recent completed regular season (e.g. 2026 in February 2027).
    (it recreates them), and `python3 ../improve/improve.py --neutral-check` must print OK.
 7. FAAB thresholds are not refitted automatically (no backtest can grade them); the report lists them. If the
    user wants a change, they say so.
+7b. Start/sit distributions (`params/dist.json`): from `work/`, `python3 ../dist/bt_frames.py` then
+   `python3 ../dist/fit_dist.py fit --write --start ../params/dist.json` (15–20 minutes). It refits the spreads and
+   correlations with a holdout check (fit on the earliest backtest season, test on the later ones: CRPS vs the
+   role-blind baseline, percentile coverage, chance-of-reaching-t calibration, teammate and opponent
+   correlations), then on every season, and refits the chance-he-plays table from the last three seasons'
+   injury reports. Keep the new file only if the holdout CRPS beats the baseline and the coverage stays within
+   two points of 10/50/90%; otherwise `git checkout -- ../params/dist.json` and report. Tests must pass either way.
 8. Commit on the branch ("Annual refit <year>: <what changed or 'no change'>"), merge into main
    (`git checkout main && git pull && git merge --no-ff annual-refit-<year>`), rerun the tests on main, push.
    On failure push the branch unmerged and report.

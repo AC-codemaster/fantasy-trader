@@ -1,0 +1,272 @@
+{
+ "version": 1,
+ "team": {
+  "sd_pass": 0.0667,
+  "sd_rush": 0.12,
+  "sd_eff": 0.0285,
+  "td_el": 0.9578
+ },
+ "game": {
+  "pace_vol": 0.08,
+  "pace_eff": 0.14,
+  "script_pass": 0.0705,
+  "script_rush": 0.2872
+ },
+ "player": {
+  "share_rb": 0.5169,
+  "share_wr": 0.297,
+  "share_te": 0.3216,
+  "share_qb": 0.0142,
+  "exit": 0.0352,
+  "exit_qb": 0.0141,
+  "eff": {
+   "QB": 0.03,
+   "RB": 0.0894,
+   "WR": 0.0636,
+   "TE": 0.0408
+  }
+ },
+ "play": {
+  "cv_rush": 1.405,
+  "cv_qbrush": 1.842,
+  "cv_catch_rb": 1.152,
+  "cv_catch_wr": 0.805,
+  "cv_catch_te": 0.801,
+  "other_ypt": 7.0,
+  "other_cv": 1.6,
+  "other_min": 0.05,
+  "other_car": 0.03,
+  "other_tgt": 0.06
+ },
+ "mean": {
+  "QB": {
+   "vr": 0.909,
+   "vt": 0.977,
+   "ypc": 1.173,
+   "rtd": 1.213,
+   "ypr": 1.0,
+   "ctd": 1.0,
+   "py": 0.988,
+   "ptd": 1.066,
+   "int": 0.916
+  },
+  "RB": {
+   "vr": 1.05,
+   "vt": 1.025,
+   "ypc": 1.007,
+   "rtd": 1.114,
+   "ypr": 1.023,
+   "ctd": 1.088,
+   "py": 1.0,
+   "ptd": 1.0,
+   "int": 1.0
+  },
+  "WR": {
+   "vr": 0.917,
+   "vt": 1.033,
+   "ypc": 0.801,
+   "rtd": 1.035,
+   "ypr": 1.013,
+   "ctd": 1.041,
+   "py": 1.0,
+   "ptd": 1.0,
+   "int": 1.0
+  },
+  "TE": {
+   "vr": 1.0,
+   "vt": 1.058,
+   "ypc": 1.0,
+   "rtd": 1.0,
+   "ypr": 1.007,
+   "ctd": 1.1,
+   "py": 1.0,
+   "ptd": 1.0,
+   "int": 1.0
+  }
+ },
+ "fitted": "2026-10-17",
+ "data": {
+  "2024": [
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15,
+   16,
+   17,
+   18
+  ],
+  "2025": [
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15,
+   16,
+   17,
+   18
+  ],
+  "2026": [
+   2,
+   3,
+   4,
+   5
+  ]
+ },
+ "check": {
+  "holdout": {
+   "trainedOn": 2024,
+   "crps": 3.654,
+   "crps_baseline": 3.7,
+   "below_p10_p50_p90": [
+    0.094,
+    0.524,
+    0.902
+   ],
+   "prob_error": 0.017
+  },
+  "all": {
+   "crps": 3.668,
+   "prob_error": 0.016,
+   "corr": [
+    {
+     "pair": "QB1-WR1 same team",
+     "actual": 0.378,
+     "sim": 0.445,
+     "n": 1078
+    },
+    {
+     "pair": "QB1-WR2 same team",
+     "actual": 0.359,
+     "sim": 0.38,
+     "n": 956
+    },
+    {
+     "pair": "QB1-TE1 same team",
+     "actual": 0.313,
+     "sim": 0.371,
+     "n": 895
+    },
+    {
+     "pair": "QB1-RB1 same team",
+     "actual": 0.071,
+     "sim": 0.073,
+     "n": 1070
+    },
+    {
+     "pair": "WR1-WR2 same team",
+     "actual": 0.013,
+     "sim": 0.024,
+     "n": 957
+    },
+    {
+     "pair": "RB1-RB2 same team",
+     "actual": -0.133,
+     "sim": -0.137,
+     "n": 529
+    },
+    {
+     "pair": "RB1-WR1 same team",
+     "actual": -0.005,
+     "sim": -0.046,
+     "n": 1064
+    },
+    {
+     "pair": "QB1-QB1 opponents",
+     "actual": 0.149,
+     "sim": 0.151,
+     "n": 1084
+    },
+    {
+     "pair": "WR1-WR1 opponents",
+     "actual": 0.177,
+     "sim": 0.052,
+     "n": 1072
+    },
+    {
+     "pair": "RB1-RB1 opponents",
+     "actual": -0.095,
+     "sim": -0.05,
+     "n": 1056
+    },
+    {
+     "pair": "QB1-WR1 opponents",
+     "actual": 0.102,
+     "sim": 0.092,
+     "n": 1078
+    }
+   ]
+  }
+ },
+ "pplay": {
+  "base": {
+   "Full": 0.941,
+   "Limited": 0.754,
+   "DNP": 0.545,
+   "none": 0.753
+  },
+  "missed_last_or": 0.566,
+  "qb_or": 0.302,
+  "doubtful": 0.012,
+  "listed_no_status": 0.974,
+  "unlisted": 0.995,
+  "active": 0.995,
+  "n": {
+   "questionable": 587,
+   "doubtful": 83,
+   "listed_no_status": 1636,
+   "seasons": [
+    2023,
+    2024,
+    2025
+   ]
+  },
+  "observed": {
+   "DNP": [
+    0.519,
+    108
+   ],
+   "Full": [
+    0.91,
+    67
+   ],
+   "Full missed last": [
+    0.952,
+    21
+   ],
+   "Limited": [
+    0.73,
+    300
+   ],
+   "Limited missed last": [
+    0.54,
+    63
+   ],
+   "none": [
+    0.778,
+    18
+   ]
+  }
+ },
+ "kdst": {
+  "k_sd": 4.73,
+  "dst_sd": 6.0,
+  "note": "kicker fitted on box scores; team defense typical value"
+ }
+}

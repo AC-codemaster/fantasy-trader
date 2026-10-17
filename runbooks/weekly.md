@@ -51,6 +51,13 @@ availability, grades rest-of-season projections, sweeps the expert weights, and 
   writing `../ledger/`. Read `../ledger/last_run.md` for the summary.
 - If it errors, run it again once with `--budget 4`; if it still fails, skip it this week and report.
 
+## 5b. Recalibrate the start/sit distributions
+The projection model may have changed in step 5, and with it how far its numbers sit from what happens.
+- `python3 ../dist/bt_frames.py` (about a minute: the backtest projections with their stat lines), then
+  `python3 ../dist/fit_dist.py means --write` — refreshes the mean multipliers and the chance-he-plays table in
+  `../params/dist.json`, keeps the fitted spreads and correlations (those are refitted yearly, see
+  `runbooks/annual-refit.md`). Report the line it prints. If it fails, keep the old file and say so.
+
 ## 6. Final build and checks
 - `python3 ../pipeline/build_db.py` — with the live parameters (step 5 may have changed them).
 - Sanity: 350–500 players; the current week is right; `sources` dates recent; absences plausible
@@ -83,9 +90,12 @@ Skip if the regular season has no unplayed games. Then `python3 ../pipeline/scor
 frozen, week N−1 graded". On a conflict, re-read and repeat once.
 
 ## 10. Save everything
-- From the repo root: `git add -A params ledger data pipeline engine page backtest improve tests tools runbooks docs scorecard_page README.md`
+- From the repo root: `git add -A params ledger data pipeline engine page backtest improve tests tools runbooks docs scorecard_page dist README.md`
   then commit ("Week N: refresh, grade, improve (<adopted change or 'no change'>)") and `git push`.
   If the push is rejected, `git pull --rebase` and push again.
+- **Check it landed:** `git fetch origin main`, then `git rev-parse HEAD` must equal `git rev-parse origin/main`.
+  If not, push once more; if it still doesn't match, put the exact error at the top of the report. (The Oct 13
+  run's push silently never arrived, so main lost that week's parameters and freeze until they were rebuilt.)
 - Project docs (Projects tool, `project_write` with `local_path`): `claude/scorecard.md` ←
   `data/scorecard/scorecard.md`; `claude/model-changelog.md` ← `ledger/changelog.md`;
   `claude/injury_news.json` ← `work/injury_news.json`.
@@ -93,5 +103,6 @@ frozen, week N−1 graded". On a conflict, re-read and repeat once.
 ## 11. Report
 A short summary: data week; notable injury changes; last week's average miss for our page vs FantasyPros
 Tuesday vs FantasyPros final, and with hindsight; start/sit %; the goal lines; what the improvement loop
-tested and adopted or reverted (from `ledger/last_run.md`); anything that failed. If the season is over
+tested and adopted or reverted (from `ledger/last_run.md`); the distribution recalibration line (5b); whether
+the push landed; anything that failed. If the season is over
 (no unplayed regular-season games): grade, publish the scorecard, commit, and say so.

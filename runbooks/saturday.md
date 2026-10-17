@@ -1,3 +1,6 @@
+> **Superseded on 2026-10-17 by `runbooks/gameday.md`** (Thursday night and Sunday morning pre-kickoff refreshes,
+> with game-day inactives). Kept for reference; the Saturday scheduled task now runs on Sunday mornings.
+
 # Fantasy Trader — Saturday injury refresh and late freeze
 
 Purpose: fold Friday's final injury reports (Out / Doubtful designations, return dates) into the page

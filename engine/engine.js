@@ -181,6 +181,12 @@ function sharePts(p, T, dr, dt, dp, sc, f = 1, E = null) {
   return scoreComp(v, sc, p.p);
 }
 
+/* Expected carries, targets and pass attempts behind sharePts (the same expressions, so the two always agree). */
+function shareOpp(p, T, dr, dt, dp, f = 1, E = null) {
+  const m = p.m, vr = E ? E.vr : 1, vp = E ? E.vp : 1;
+  return [dr > 0 ? (T.r * vr * m[0] * f) / dr : 0, dt > 0 ? (T.t * vp * m[1] * f) / dt : 0, dp > 0 ? (T.p * vp * m[2] * f) / dp : 0];
+}
+
 /*
  * Game environment. A team's Vegas implied total vs its usual level (x) and the spread (s, + =
  * favored) scale its volume and per-play production; fit on 2022-25 team games (log change vs the
@@ -223,7 +229,7 @@ function usageModel(DB, L) {
   const isOut = (o, w) => o != null && w <= o;
   // short absence: not on a reserve list, and back within two weeks of now
   const shortOut = (p, o) => o != null && o - cur <= 1 && !(p.ij && p.ij.thru === o && RESERVE_RE.test(p.ij.st || ""));
-  const res = new Map();
+  const res = new Map(), opp0 = new Map(), den0 = new Map();
   for (const [tm, ps] of byTeam) {
     const T = teams[tm];
     if (!T) { for (const p of ps) res.set(p.id, { now: new Float64Array(nW), ecr: new Float64Array(nW), full: 0, avail: new Array(nW).fill(false) }); continue; }
@@ -265,6 +271,7 @@ function usageModel(DB, L) {
       e[0] += DAMP * eS[0]; e[1] += DAMP * eS[1];
       dNow.push(a); dEcr.push(e);
     }
+    if (nW) den0.set(tm, dNow[0].slice());
     for (const p of ps) {
       const now = new Float64Array(nW), ecr = new Float64Array(nW), fullW = new Float64Array(nW), avail = [];
       const on = outNow.get(p.id), oe = outEcr(p);
@@ -276,6 +283,8 @@ function usageModel(DB, L) {
         // (if his own absence was counted in the depth-player share, take that back out)
         const addA = isOut(on, w) ? 1 - (shortOut(p, on) ? DAMP : 0) : 0, addE = isOut(oe, w) ? 1 - (shortOut(p, oe) ? DAMP : 0) : 0;
         now[wi] = sharePts(p, T, a[0] + addA * p.m[0], a[1] + addA * p.m[1], a[2] + (isOut(on, w) ? p.m[2] : 0), sc, fa, env[wi]);
+        // this week's expected carries, targets and attempts (same split as above): the start/sit simulation's inputs
+        if (wi === 0) opp0.set(p.id, shareOpp(p, T, a[0] + addA * p.m[0], a[1] + addA * p.m[1], a[2] + (isOut(on, w) ? p.m[2] : 0), fa, env[wi]));
         ecr[wi] = sharePts(p, T, e[0] + addE * p.m[0], e[1] + addE * p.m[1], e[2] + (isOut(oe, w) ? p.m[2] : 0), sc, fe, env[wi]);
         // everyone healthy, same game environment and his own first-game-back factor: the yardstick for role changes
         fullW[wi] = sharePts(p, T, full[0] - (1 - fa) * p.m[0], full[1] - (1 - fa) * p.m[1], full[2] - (1 - fa) * p.m[2], sc, fa, env[wi]);
@@ -284,7 +293,7 @@ function usageModel(DB, L) {
       res.set(p.id, { now, ecr, full: sharePts(p, T, full[0], full[1], full[2], sc), fullW, avail, back: fNow.get(p.id), env });
     }
   }
-  return { weeks, res, byTeam, outNow };
+  return { weeks, res, byTeam, outNow, opp0, den0 };
 }
 
 function meanOver(arr, mask) {
@@ -1314,6 +1323,431 @@ function sampleLeague(DB, seed) {
   return L;
 }
 
+/* ---------------- Weekly points distributions: start/sit, floor and ceiling ---------------- */
+/*
+ * Every player's points this week as a distribution instead of one number. Each game is simulated a few
+ * thousand times from the same expected stat line as his projection: a pace shock both teams share and a
+ * script shock that splits them; each team's pass volume, rush volume and efficiency; each player's role
+ * (shares are re-split inside the team, so one back's big day is his teammate's small one), a small chance
+ * he leaves early, his efficiency; then carries and targets (Poisson), catches (binomial), yards (sums of
+ * plays) and touchdowns (Poisson). A quarterback's passing line is his pass catchers' receiving line, so a
+ * QB and his receivers rise and fall together. Players listed Questionable play with the chance past
+ * Questionable players with the same practice report played. dist/sim.py is the reference implementation
+ * and params/dist.json the fitted numbers (2024-26 backtest weeks).
+ */
+// The fitted distribution model (params/dist.json). tools/make_page.py writes this line.
+const DIST = {"version":0,"team":{"sd_pass":0.12,"sd_rush":0.2,"sd_eff":0.06,"td_el":1.5},"game":{"pace_vol":0.06,"pace_eff":0.14,"script_pass":0.08,"script_rush":0.2},"player":{"share_rb":0.38,"share_wr":0.25,"share_te":0.22,"share_qb":0.025,"exit":0.03,"exit_qb":0.02,"eff":{"QB":0,"RB":0.077,"WR":0.12,"TE":0.08}},"play":{"cv_rush":1.4,"cv_qbrush":1.04,"cv_catch_rb":1.5,"cv_catch_wr":0.9,"cv_catch_te":0.8,"other_ypt":7,"other_cv":1.6,"other_min":0.05,"other_car":0.03,"other_tgt":0.06},"mean":{"QB":{},"RB":{},"WR":{},"TE":{}},"pplay":{"base":{"Full":0.94,"Limited":0.75,"DNP":0.55,"none":0.75},"missed_last_or":0.57,"qb_or":0.3,"doubtful":0.012,"listed_no_status":0.974,"unlisted":0.995,"active":0.995},"kdst":{"k_sd":4.5,"dst_sd":6}};
+
+/* Seeded random numbers (xoshiro128**), with the draws the simulation needs. */
+function makeRng(seed) {
+  let s = (seed >>> 0) || 1;
+  const sm = () => { s = (s + 0x9e3779b9) | 0; let z = s; z = Math.imul(z ^ (z >>> 16), 0x85ebca6b); z = Math.imul(z ^ (z >>> 13), 0xc2b2ae35); return (z ^ (z >>> 16)) >>> 0; };
+  let a = sm(), b = sm(), c = sm(), d = sm();
+  const rotl = (x, k) => (x << k) | (x >>> (32 - k));
+  const u = () => {
+    const r = Math.imul(rotl(Math.imul(b, 5), 7), 9), t = b << 9;
+    c ^= a; d ^= b; b ^= c; a ^= d; c ^= t; d = rotl(d, 11);
+    return ((r >>> 0) + 0.5) / 4294967296;
+  };
+  let spare = null;
+  const normal = () => {
+    if (spare !== null) { const x = spare; spare = null; return x; }
+    let x, y, q;
+    do { x = 2 * u() - 1; y = 2 * u() - 1; q = x * x + y * y; } while (q >= 1 || q === 0);
+    const f = Math.sqrt(-2 * Math.log(q) / q);
+    spare = y * f;
+    return x * f;
+  };
+  const gamma = (k) => {               // shape k, scale 1 (Marsaglia-Tsang)
+    if (!(k > 0)) return 0;
+    if (k < 1) return gamma(k + 1) * Math.pow(u(), 1 / k);
+    const dd = k - 1 / 3, cc = 1 / Math.sqrt(9 * dd);
+    for (;;) {
+      let x, v;
+      do { x = normal(); v = 1 + cc * x; } while (v <= 0);
+      v = v * v * v;
+      const w = u();
+      if (w < 1 - 0.0331 * x * x * x * x) return dd * v;
+      if (Math.log(w) < 0.5 * x * x + dd * (1 - v + Math.log(v))) return dd * v;
+    }
+  };
+  const poisson = (lam) => {
+    if (!(lam > 0)) return 0;
+    if (lam < 10) {                     // inversion
+      let k = 0, p = Math.exp(-lam), F = p;
+      const w = u();
+      while (w > F && k < 200) { k++; p *= lam / k; F += p; }
+      return k;
+    }
+    const sl = Math.sqrt(lam), ll = Math.log(lam), bb = 0.931 + 2.53 * sl, aa = -0.059 + 0.02483 * bb;
+    const inva = 1.1239 + 1.1328 / (bb - 3.4), vr = 0.9277 - 3.6224 / (bb - 2);
+    for (;;) {                          // transformed rejection (Hormann's PTRS)
+      const U = u() - 0.5, V = u(), us = 0.5 - Math.abs(U);
+      const k = Math.floor((2 * aa / us + bb) * U + lam + 0.43);
+      if (us >= 0.07 && V <= vr) return k;
+      if (k < 0 || (us < 0.013 && V > us)) continue;
+      if (Math.log(V) + Math.log(inva) - Math.log(aa / (us * us) + bb) <= -lam + k * ll - logFact(k)) return k;
+    }
+  };
+  const binom = (n, p) => { let k = 0; for (let i = 0; i < n; i++) if (u() < p) k++; return k; };
+  return { u, normal, gamma, poisson, binom };
+}
+const _lf = [0];
+function logFact(k) {
+  if (k < 0) return 0;
+  if (k < 256) { while (_lf.length <= k) _lf.push(_lf[_lf.length - 1] + Math.log(_lf.length)); return _lf[k]; }
+  return (k + 0.5) * Math.log(k) - k + 0.5 * Math.log(2 * Math.PI) + 1 / (12 * k);
+}
+
+/* How a player's injury status reads for this week: game status, last practice, and whether he missed his
+   team's last game. ESPN's status counts when your import is newer than the weekly data. */
+function weekStatus(ctx, p) {
+  const L = ctx.L, x = L.espn && L.espn.players && L.espn.players[p.id];
+  const espnNewer = L.espn && L.espn.importedAt && new Date(L.espn.importedAt) > new Date(ctx.DB.builtAt || 0);
+  const es = x && x.status ? ({ QUESTIONABLE: "Questionable", DOUBTFUL: "Doubtful", OUT: "Out", INJURY_RESERVE: "Out", SUSPENSION: "Out" })[x.status] || "" : "";
+  let gs = p.gd === "active" ? "Active" : p.gd === "inactive" ? "Inactive" : (p.gs || "");
+  if (!gs && /^(Questionable|Doubtful)/.test(p.inj || "")) gs = p.inj.startsWith("Doubtful") ? "Doubtful" : "Questionable";
+  if (espnNewer && es && gs !== "Active" && gs !== "Inactive") gs = es;
+  const byes = ctx.DB.byes[p.t] || [], cur = +ctx.S.curWeek;
+  let last = 0;
+  for (let w = cur - 1; w >= 1; w--) if (!byes.includes(w)) { last = w; break; }
+  const missed = !!last && (p.lg == null ? !p.g26 : +p.lg < last);
+  return { gs, pr: p.pr || "", missed };
+}
+
+/* Chance he plays this week (0 when he's out or on bye). */
+function pPlay(ctx, p) {
+  const v = ctx.val.get(p.id), P = DIST.pplay;
+  if (!v || !v.avail[0]) return { p: 0, why: (ctx.DB.byes[p.t] || []).includes(+ctx.S.curWeek) ? "bye" : "out" };
+  const st = weekStatus(ctx, p);
+  if (st.gs === "Active") return { p: P.active, why: "active: his team's inactives are out" };
+  if (st.gs === "Inactive" || st.gs === "Out") return { p: 0, why: "inactive" };
+  if (st.gs === "Doubtful") return { p: P.doubtful, why: "doubtful" };
+  if (st.gs === "Questionable") {
+    const b = P.base[st.pr || "none"] ?? P.base.none;
+    let odds = b / (1 - b);
+    if (st.missed) odds *= P.missed_last_or;
+    if (p.p === "QB") odds *= P.qb_or;
+    const q = odds / (1 + odds);
+    return { p: q, why: `questionable${st.pr ? `, ${st.pr === "DNP" ? "did not practice" : st.pr.toLowerCase() + " practice"} last` : ""}${st.missed ? ", missed last game" : ""}` };
+  }
+  if (st.pr) return { p: P.listed_no_status, why: "on the practice report, no game status" };
+  return { p: P.unlisted, why: "" };
+}
+
+/* His expected stat line this week as the projection has it, ready for the simulation (null if he doesn't play). */
+function distInputs(ctx, p, raw = false) {
+  const U = ctx.val.usage, v = ctx.val.get(p.id);
+  if (!U || !U.opp0 || !v || !v.avail[0] || !p.m) return null;
+  const o = U.opp0.get(p.id);
+  if (!o) return null;
+  const E = v.env && v.env[0], m = p.m;
+  const ey = E ? E.py : 1, et = E ? E.pt : 1, ry = E ? E.ry : 1, rt = E ? E.rt : 1;
+  // the page's projection on top of the usage model (expert blends, your own number) scales his volume
+  const model = v.modelWeekly[0], fin = ctx.wkA.get(p.id)[0];
+  const r = model > 0.01 ? fin / model : 1;
+  // raw: the projection's own stat line, without the calibration (tests compare it with dist/sim.py)
+  const M = (!raw && DIST.mean[p.p]) || {}, g = (k) => (M[k] == null ? 1 : +M[k]);
+  const sc = ctx.S.scoring, bp = (sc.byPos && sc.byPos[p.p]) || null;
+  const w = SCORE_KEYS.map((k) => (bp && bp[k] != null && bp[k] !== "" ? +bp[k] : +sc[k] || 0));
+  const qb = p.p === "QB";
+  const att = qb ? o[2] * r : 0, car = qb ? att * m[11] : o[0] * r, tgt = qb ? 0 : o[1] * r;
+  return {
+    id: p.id, pos: p.p, qb, w, pplay: raw ? 1 : pPlay(ctx, p).p,
+    car: car * g("vr"), tgt: tgt * g("vt"), att: att * g("vt"),
+    ypc: m[3] * ry * g("ypc"), rtd: m[4] * rt * g("rtd"), cr: qb ? 0 : Math.min(1, m[5]),
+    ypr: !qb && m[5] > 0 ? (m[6] * ey / m[5]) * g("ypr") : 0, ctd: !qb && m[5] > 0 ? (m[7] * et / m[5]) * g("ctd") : 0,
+    py: qb ? att * m[8] * ey * g("py") : 0, ptd: qb ? att * m[9] * et * g("ptd") : 0, ipa: qb ? m[10] * g("int") : 0,
+    fl: m[12], two: m[13], proj: fin,
+  };
+}
+
+/*
+ * Simulate this week's games for every team with a player in `ids` (whole teams: shares and passing need
+ * teammates). Returns { n, pts: Map(id -> Float32Array of n points), inp: Map(id -> inputs), teams }.
+ * Same seed, same numbers: start/sit comparisons use the same simulated games for every option.
+ */
+function simWeek(ctx, ids, opts = {}) {
+  const n = Math.max(200, opts.n || 4000), R = makeRng(opts.seed ?? 20261017);
+  const D = DIST, tm = D.team, gm = D.game, pl = D.player, pp = D.play;
+  const DB = ctx.DB, U = ctx.val.usage;
+  const teamsWanted = new Set();
+  for (const id of ids) { const p = ctx.byId.get(id); if (p) teamsWanted.add(p.t); }
+  if (opts.allTeams) for (const t of Object.keys(DB.teams || {})) teamsWanted.add(t);
+  const opp = DB.opp || {};
+  // team blocks
+  const blocks = [];
+  for (const t of teamsWanted) {
+    const mates = (U && U.byTeam.get(t)) || [];
+    const ps = [];
+    for (const q of mates) { const x = distInputs(ctx, q, !!opts.raw); if (x && (x.car + x.tgt + x.att) > 0.02) ps.push(x); }
+    if (!ps.length) continue;
+    const k = ps.length;
+    const B = { team: t, ps, k, opp: opp[t] || null };
+    let ec = 0, et = 0, ea = 0, Ey = 0, Et = 0, Qy = 0, Qt = 0;
+    for (const x of ps) {
+      if (x.qb) { ea += x.att; Qy += x.py; Qt += x.ptd; }
+      else { ec += x.car; et += x.tgt; Ey += x.tgt * x.cr * x.ypr; Et += x.tgt * x.cr * x.ctd; }
+    }
+    Object.assign(B, { ec, et, ea, Ey, Et, Qy, Qt, Oy: Math.max(pp.other_min * Qy, Qy - Ey), Ot: Math.max(pp.other_min * Qt, Qt - Et) });
+    B.share = Float64Array.from(ps, (x) => (x.qb ? pl.share_qb : x.pos === "RB" ? pl.share_rb : x.pos === "WR" ? pl.share_wr : pl.share_te));
+    B.exitp = Float64Array.from(ps, (x) => (x.qb ? pl.exit_qb : pl.exit));
+    B.sde = Float64Array.from(ps, (x) => pl.eff[x.pos] || 0);
+    B.cvc = Float64Array.from(ps, (x) => (x.pos === "RB" ? pp.cv_catch_rb : x.pos === "WR" ? pp.cv_catch_wr : pp.cv_catch_te));
+    B.out = ps.map(() => new Float32Array(n));
+    B.g = new Float64Array(k); B.f = new Float64Array(k); B.lc = new Float64Array(k); B.lt = new Float64Array(k); B.la = new Float64Array(k);
+    blocks.push(B);
+  }
+  // games: pair teams that play each other (pace and script are shared); side +1 for the alphabetically first
+  const gameOf = new Map();
+  for (const B of blocks) {
+    const o = B.opp, key = o ? [B.team, o].sort().join("-") : B.team;
+    if (!gameOf.has(key)) gameOf.set(key, gameOf.size);
+    B.game = gameOf.get(key);
+    B.side = !o || B.team <= o ? 1 : -1;
+  }
+  const G = gameOf.size, pace = new Float64Array(G), script = new Float64Array(G);
+  const varP = tm.sd_pass ** 2 + gm.pace_vol ** 2 + gm.script_pass ** 2, varR = tm.sd_rush ** 2 + gm.script_rush ** 2;
+  const varQ = tm.sd_eff ** 2 + gm.pace_eff ** 2, varU = tm.sd_eff ** 2, tdl = tm.td_el;
+  const gsum = (np, mean, cv) => (np > 0 && mean > 0 ? R.gamma(np / (cv * cv)) * mean * cv * cv : 0);
+  // pool re-split: role shocks keep the pool's size, early exits hand work to teammates still playing
+  const split = (B, E, which, other, out, sel) => {
+    let tot = 0, ga = 0;
+    for (let i = 0; i < B.k; i++) if (sel(B.ps[i])) { tot += E(B.ps[i]); ga += E(B.ps[i]) * B.g[i]; }
+    if (tot <= 0) { for (let i = 0; i < B.k; i++) if (sel(B.ps[i])) out[i] = 0; return; }
+    const gbar = (ga + other * tot) / ((1 + other) * tot);
+    let kept = 0, lost = 0;
+    for (let i = 0; i < B.k; i++) if (sel(B.ps[i])) { const a = E(B.ps[i]) * B.g[i] / gbar; out[i] = a * B.f[i]; kept += out[i]; lost += a - out[i]; }
+    const K = kept + other * tot;
+    for (let i = 0; i < B.k; i++) if (sel(B.ps[i])) out[i] = out[i] + (K > 0 ? lost * out[i] / K : 0);
+  };
+  const isSk = (x) => !x.qb, isQb = (x) => x.qb;
+  const eCar = (x) => x.car, eTgt = (x) => x.tgt, eAtt = (x) => x.att;
+  const nA = new Float64Array(64), recY = new Float64Array(64), recT = new Float64Array(64), nC = new Float64Array(64), nT = new Float64Array(64);
+  for (let s = 0; s < n; s++) {
+    for (let gI = 0; gI < G; gI++) { pace[gI] = R.normal(); script[gI] = R.normal(); }
+    for (const B of blocks) {
+      const pc = pace[B.game], sp = script[B.game] * B.side;
+      // pace = the game's passing environment (shootouts, weather), shared; script splits the two teams
+      const lp = tm.sd_pass * R.normal() + gm.pace_vol * pc - gm.script_pass * sp;
+      const lr = tm.sd_rush * R.normal() + gm.script_rush * sp;
+      const ze = tm.sd_eff * R.normal(), lq = ze + gm.pace_eff * pc;
+      const vp = Math.exp(lp - 0.5 * varP), vr = Math.exp(lr - 0.5 * varR);
+      const ve = Math.exp(lq - 0.5 * varQ), vt = Math.exp(tdl * lq - 0.5 * tdl * tdl * varQ);       // passing
+      const vu = Math.exp(ze - 0.5 * varU), vtu = Math.exp(tdl * ze - 0.5 * tdl * tdl * varU);       // rushing
+      for (let i = 0; i < B.k; i++) {
+        const sd = B.share[i], kk = 1 / (sd * sd);
+        B.g[i] = sd > 0 ? R.gamma(kk) / kk : 1;
+        let f = R.u() < B.exitp[i] ? R.u() : 1;
+        if (R.u() >= B.ps[i].pplay) f = 0;                 // inactive or scratched: his work goes to teammates
+        B.f[i] = f;
+      }
+      split(B, eCar, "car", pp.other_car, B.lc, isSk);
+      split(B, eTgt, "tgt", pp.other_tgt, B.lt, isSk);
+      split(B, eAtt, "att", 0.01, B.la, isQb);
+      let Sy = 0, St = 0, attTot = 0;
+      for (let i = 0; i < B.k; i++) {
+        const x = B.ps[i];
+        const z = R.normal(), sde = B.sde[i];
+        const eff = Math.exp(sde * z - 0.5 * sde * sde), etd = Math.exp(tdl * sde * z - 0.5 * tdl * tdl * sde * sde);
+        if (x.qb) {
+          const la = B.la[i] * vp;
+          nA[i] = R.poisson(la);
+          attTot += nA[i];
+          const frac = x.att > 0 ? B.la[i] / x.att : 0;
+          nC[i] = R.poisson(x.car * vp * frac);
+          nT[i] = 0;
+        } else {
+          nC[i] = R.poisson(B.lc[i] * vr);
+          nT[i] = R.poisson(B.lt[i] * vp);
+          nA[i] = 0;
+        }
+        const ry = gsum(nC[i], x.ypc * vu * eff, x.qb ? pp.cv_qbrush : pp.cv_rush);
+        const rtd = R.poisson(nC[i] * x.rtd * vtu * etd);
+        let rec = 0, ryd = 0, rtdc = 0;
+        if (!x.qb && nT[i] > 0) {
+          rec = R.binom(nT[i], x.cr);
+          ryd = gsum(rec, x.ypr * ve * eff, B.cvc[i]);
+          rtdc = R.poisson(rec * x.ctd * vt * etd);
+        }
+        recY[i] = ryd; recT[i] = rtdc; Sy += ryd; St += rtdc;
+        const ops = nC[i] + nT[i] + nA[i];
+        const fl = R.poisson(ops * x.fl), two = R.poisson(ops * x.two);
+        // QB passing is added below, once the receivers are done
+        B.out[i][s] = x.w[3] * ry + x.w[4] * rtd + x.w[5] * rec + x.w[6] * ryd + x.w[7] * rtdc + x.w[8] * fl + x.w[9] * two;
+      }
+      if (B.ea > 0) {
+        const oy = gsum((B.Oy / pp.other_ypt) * vp, pp.other_ypt * ve, pp.other_cv), ot = R.poisson(B.Ot * vp * vt);
+        const tpy = B.Ey + B.Oy > 0 ? ((Sy + oy) / (B.Ey + B.Oy)) * B.Qy : 0;
+        const tpt = B.Et + B.Ot > 0 ? ((St + ot) / (B.Et + B.Ot)) * B.Qt : 0;
+        for (let i = 0; i < B.k; i++) {
+          const x = B.ps[i];
+          if (!x.qb) continue;
+          const sh = attTot > 0 ? nA[i] / attTot : (B.Qy > 0 ? x.py / B.Qy : 0);
+          const ints = R.poisson(nA[i] * x.ipa);
+          B.out[i][s] += x.w[0] * tpy * sh + x.w[1] * tpt * sh + x.w[2] * ints;
+        }
+      }
+    }
+  }
+  const pts = new Map(), inp = new Map();
+  for (const B of blocks) B.ps.forEach((x, i) => { pts.set(x.id, B.out[i]); inp.set(x.id, x); });
+  return { n, pts, inp, teams: blocks.map((B) => B.team) };
+}
+
+/* Percentiles and chances from one player's simulated points. */
+function distSummary(arr, proj) {
+  const a = Float64Array.from(arr).sort(), n = a.length;
+  const q = (p) => { const h = (n - 1) * p, i = Math.floor(h); return i + 1 < n ? a[i] + (h - i) * (a[i + 1] - a[i]) : a[n - 1]; };
+  let s = 0;
+  for (let i = 0; i < n; i++) s += a[i];
+  const ge = (t) => { let lo = 0, hi = n; while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] < t) lo = m + 1; else hi = m; } return (n - lo) / n; };
+  return { mean: s / n, p10: q(0.1), p25: q(0.25), p50: q(0.5), p75: q(0.75), p90: q(0.9), ge, sorted: a,
+    boom: proj > 0 ? ge(1.5 * proj) : 0, bust: proj > 0 ? 1 - ge(0.5 * proj) : 0 };
+}
+
+/* Lineup slots as a list, narrowest first, each with the positions it takes. */
+const SLOT_POS = { QB: ["QB"], RB: ["RB"], WR: ["WR"], TE: ["TE"], RBWR: ["RB", "WR"], WRTE: ["WR", "TE"], FLEX: ["RB", "WR", "TE"], OP: ["QB", "RB", "WR", "TE"] };
+function lineupSlotList(S) {
+  const out = [];
+  for (const k of ["QB", "RB", "WR", "TE", "RBWR", "WRTE", "FLEX", "OP"]) for (let i = 0; i < (+S.slots[k] || 0); i++) out.push({ k, pos: SLOT_POS[k] });
+  return out;
+}
+/* Put players in slots (bipartite matching). Returns slot index per player, or null if they don't fit. */
+function fitSlots(slots, posList) {
+  if (posList.length > slots.length) return null;
+  const owner = new Array(slots.length).fill(-1);
+  const tryP = (i, seen) => {
+    for (let s = 0; s < slots.length; s++) {
+      if (seen[s] || !slots[s].pos.includes(posList[i])) continue;
+      seen[s] = true;
+      if (owner[s] < 0 || tryP(owner[s], seen)) { owner[s] = i; return true; }
+    }
+    return false;
+  };
+  // narrow players first keeps flex slots open
+  const order = posList.map((_, i) => i);
+  for (const i of order) if (!tryP(i, new Array(slots.length).fill(false))) return null;
+  const at = new Array(posList.length);
+  owner.forEach((i, s) => { if (i >= 0) at[i] = s; });
+  return at;
+}
+/* The highest-projection legal lineup from a list of { id, pos, v } (v = points to rank by). */
+function bestByValue(slots, cands) {
+  const c = cands.filter((x) => x.v > 0).sort((a, b) => b.v - a.v);
+  const chosen = [];
+  for (const x of c) {
+    if (chosen.length >= slots.length) break;
+    if (fitSlots(slots, chosen.concat([x]).map((y) => y.pos))) chosen.push(x);
+  }
+  return chosen;
+}
+
+/*
+ * Start/sit for one matchup. mine/theirs: teams. Ranks lineups by the chance to win the week, not just by
+ * projected points: P(win) = share of simulated weeks where your starters outscore theirs (kickers and team
+ * defenses aren't modeled; their usual swings are added to both sides as noise).
+ */
+function startSit(ctx, mine, theirs, opts = {}) {
+  const S = ctx.S, slots = lineupSlotList(S);
+  const ids = mine.roster.concat(theirs ? theirs.roster : []).filter((id) => ctx.byId.has(id));
+  const sim = opts.sim || simWeek(ctx, ids, { n: opts.n || 4000, seed: opts.seed });
+  const n = sim.n;
+  const info = (id) => {
+    const p = ctx.byId.get(id), arr = sim.pts.get(id), x = sim.inp.get(id);
+    return { id, pos: p.p, proj: x ? x.proj : 0, pplay: x ? x.pplay : 0, arr, ok: !!arr };
+  };
+  const pool = (team) => team.roster.filter((id) => ctx.byId.has(id)).map(info).filter((x) => x.ok);
+  const me = pool(mine);
+  // the lineup they'd set: highest projection, discounted by the chance each plays
+  const oppL = theirs ? bestByValue(slots, pool(theirs).map((x) => ({ ...x, v: x.proj * x.pplay }))) : [];
+  const oppTot = new Float64Array(n);
+  for (const x of oppL) for (let s = 0; s < n; s++) oppTot[s] += x.arr[s];
+  // kickers and defenses: unmodeled, the same on average for both sides
+  const K = DIST.kdst || { k_sd: 4.5, dst_sd: 6 };
+  const nk = S.slotsK == null ? 1 : +S.slotsK || 0, nd = S.slotsDST == null ? 1 : +S.slotsDST || 0;
+  const kd = opts.kdst === false ? 0 : Math.sqrt(2 * (K.k_sd ** 2 * nk + K.dst_sd ** 2 * nd));
+  const R = makeRng(7919), noise = new Float64Array(n);
+  for (let s = 0; s < n; s++) noise[s] = kd * R.normal() + (opts.lead || 0);
+  const pwin = (set) => {
+    const tot = new Float64Array(n);
+    for (const x of set) for (let s = 0; s < n; s++) tot[s] += x.arr[s];
+    let w = 0;
+    for (let s = 0; s < n; s++) { const d = tot[s] - oppTot[s] + noise[s]; w += d > 0 ? 1 : d === 0 ? 0.5 : 0; }
+    return w / n;
+  };
+  // players whose game already started can't be moved: locked in (opts.lockedIn) or out (the rest of opts.locked)
+  const locked = new Set(opts.locked || []), lockedIn = new Set(opts.lockedIn || []);
+  const val = (x) => (locked.has(x.id) ? (lockedIn.has(x.id) ? 1e6 : -1) : x.proj * (x.pplay >= 0.5 ? 1 : x.pplay));
+  const byProj = bestByValue(slots, me.map((x) => ({ ...x, v: val(x) })));
+  // local search: swap one starter for one bench player while the chance to win goes up
+  const inSet = (set, b) => set.some((x) => x.id === b.id);
+  let cur = byProj.slice(), pCur = pwin(cur);
+  for (let it = 0; it < 8; it++) {
+    let best = null;
+    for (let i = 0; i < cur.length; i++) for (const b of me) {
+      if (inSet(cur, b) || locked.has(b.id) || locked.has(cur[i].id)) continue;
+      const trial = cur.slice(); trial[i] = b;
+      if (!fitSlots(slots, trial.map((x) => x.pos))) continue;
+      const p = pwin(trial);
+      if (p > pCur + 0.002 && (!best || p > best.p)) best = { trial, p };
+    }
+    // a lineup with an open slot: try every bench player in it
+    if (cur.length < slots.length) for (const b of me) {
+      if (inSet(cur, b) || locked.has(b.id)) continue;
+      const trial = cur.concat([b]);
+      if (!fitSlots(slots, trial.map((y) => y.pos))) continue;
+      const p = pwin(trial);
+      if (p > pCur + 0.002 && (!best || p > best.p)) best = { trial, p };
+    }
+    if (!best) break;
+    cur = best.trial; pCur = best.p;
+  }
+  // for every starter in the best lineup: the chance to win with each bench player who could take his place
+  const alts = cur.map((x, i) => {
+    const opts2 = [];
+    if (locked.has(x.id)) return { id: x.id, p: pCur, alts: opts2, locked: true };
+    for (const b of me) {
+      if (inSet(cur, b) || locked.has(b.id)) continue;
+      const trial = cur.slice(); trial[i] = b;
+      if (!fitSlots(slots, trial.map((y) => y.pos))) continue;
+      opts2.push({ id: b.id, p: pwin(trial) });
+    }
+    return { id: x.id, p: pCur, alts: opts2.sort((a, b) => b.p - a.p) };
+  });
+  const sumMean = (set) => set.reduce((a, x) => a + x.arr.reduce((u, v) => u + v, 0) / n, 0);
+  const assign = (set) => { const at = fitSlots(slots, set.map((x) => x.pos)) || []; return set.map((x, i) => ({ id: x.id, slot: slots[at[i]] ? slots[at[i]].k : "" })); };
+  return { sim, slots, kd, opp: oppL.map((x) => x.id), oppMean: sumMean(oppL),
+    proj: { ids: byProj.map((x) => x.id), p: pwin(byProj), mean: sumMean(byProj), lineup: assign(byProj) },
+    best: { ids: cur.map((x) => x.id), p: pCur, mean: sumMean(cur), lineup: assign(cur) }, alts };
+}
+
+/*
+ * One decision under a target: for each candidate, the chance that he plus your other players still to play
+ * outscore their players still to play by more than you trail (lead < 0 when you're ahead). With nobody else
+ * left on either side it is simply the chance he scores more than the deficit.
+ */
+function needCalc(ctx, cands, opts = {}) {
+  const mineLeft = opts.mine || [], theirsLeft = opts.theirs || [];
+  const sim = opts.sim || simWeek(ctx, cands.concat(mineLeft, theirsLeft), { n: opts.n || 6000, seed: opts.seed });
+  const n = sim.n, base = new Float64Array(n);
+  for (const id of mineLeft) { const a = sim.pts.get(id); if (a) for (let s = 0; s < n; s++) base[s] += a[s]; }
+  for (const id of theirsLeft) { const a = sim.pts.get(id); if (a) for (let s = 0; s < n; s++) base[s] -= a[s]; }
+  const K = DIST.kdst || { k_sd: 4.5, dst_sd: 6 };
+  const kd = opts.kdst ? Math.sqrt(2 * (K.k_sd ** 2 + K.dst_sd ** 2)) : 0;
+  const R = makeRng(104729), noise = new Float64Array(n);
+  if (kd > 0) for (let s = 0; s < n; s++) noise[s] = kd * R.normal();
+  const need = +opts.need || 0;
+  return cands.map((id) => {
+    const a = sim.pts.get(id);
+    if (!a) return { id, p: 0, sum: null };
+    let w = 0;
+    for (let s = 0; s < n; s++) { const d = a[s] + base[s] + noise[s] - need; w += d > 0 ? 1 : d === 0 ? 0.5 : 0; }
+    const x = sim.inp.get(id);
+    return { id, p: w / n, sum: distSummary(a, x ? x.proj : 0), pplay: x ? x.pplay : 0 };
+  });
+}
+
 /* ---------------- ESPN import ---------------- */
 const ESPN_SLOTS = { 0: "QB", 2: "RB", 3: "RBWR", 4: "WR", 5: "WRTE", 6: "TE", 7: "OP", 23: "FLEX" };
 const ESPN_POS = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "D/ST" };
@@ -1331,7 +1765,7 @@ function parseLeagueInput(text) {
 }
 
 function espnApiUrl(leagueId, season) {
-  return `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}/segments/0/leagues/${leagueId}?view=mSettings&view=mTeam&view=mRoster`;
+  return `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${season}/segments/0/leagues/${leagueId}?view=mSettings&view=mTeam&view=mRoster&view=mMatchup`;
 }
 
 /* Find the JSON object inside pasted text or page text. */
@@ -1404,6 +1838,8 @@ function parseEspn(raw, DB, opts) {
   const slots = { QB: 0, RB: 0, WR: 0, TE: 0, RBWR: 0, WRTE: 0, FLEX: 0, OP: 0 };
   const counts = (set.rosterSettings && set.rosterSettings.lineupSlotCounts) || {};
   for (const [sid, n] of Object.entries(counts)) if (ESPN_SLOTS[sid]) slots[ESPN_SLOTS[sid]] += +n || 0;
+  // kickers (17) and team defenses (16) aren't modeled, but start/sit adds their usual swing to both sides
+  const slotsK = +counts[17] || 0, slotsDST = +counts[16] || 0;
 
   // schedule
   const sch = set.scheduleSettings || {};
@@ -1476,12 +1912,15 @@ function parseEspn(raw, DB, opts) {
     leagueId: String(j.id || opts.leagueId || ""),
     season,
     name: set.name || "ESPN league " + (j.id || ""),
-    settings: { teams: +set.size || teams.length, scoring, slots, curWeek: week, lastWeek, playoffStart: regWeeks + 1,
+    settings: { teams: +set.size || teams.length, scoring, slots, slotsK, slotsDST, curWeek: week, lastWeek, playoffStart: regWeeks + 1,
       faab: !!acq.isUsingAcquisitionBudget, faabBudget: +acq.acquisitionBudget || 100 },
     teams,
     autoOut,
     players,
     report,
+    // weekly matchups (with view=mMatchup): start/sit picks this week's opponent
+    schedule: Array.isArray(j.schedule) ? j.schedule.filter((m) => m && m.home && m.away && m.matchupPeriodId != null)
+      .map((m) => ({ w: +m.matchupPeriodId, h: "espn-" + m.home.teamId, a: "espn-" + m.away.teamId })) : null,
   };
 }
 
@@ -1503,9 +1942,11 @@ function applyEspn(prev, imp, DB, mineEspnTeamId) {
   if (!L.teams.some((t) => t.mine) && L.teams[0]) L.teams[0].mine = true;
   L.autoOut = imp.autoOut;
   L.espn = { leagueId: imp.leagueId, season: imp.season, importedAt: new Date().toISOString(), players: imp.players };
+  if (imp.schedule && imp.schedule.length) L.espn.schedule = imp.schedule;
+  else if (prev && prev.espn && prev.espn.schedule) L.espn.schedule = prev.espn.schedule;
   L.out = L.out || {};
   L.overrides = L.overrides || {};
   return L;
 }
 
-if (typeof module !== "undefined" && module.exports) module.exports = { PARAMS, faabPerDollar, faabValue, faabOf, depthFor, teamDepth, streamLevels, overWaiver, roleNotes, usageModel, sharePts, effOut, weekOfDate, defaultOut, DEFAULT_SETTINGS, newLeague, buildCtx, valuations, teamValue, evalTrade, findTrades, contextValues, lineupForWeek, sampleLeague, scoreComp, vorpQ, marketPrice, marketPrices, perspective, fanOf, teamMood, styleOf, styleWeights, perceive, outWeek, parseLeagueInput, espnApiUrl, extractJson, parseEspn, applyEspn, SIGNALS };
+if (typeof module !== "undefined" && module.exports) module.exports = { PARAMS, DIST, makeRng, pPlay, weekStatus, distInputs, simWeek, distSummary, lineupSlotList, fitSlots, bestByValue, startSit, needCalc, shareOpp, faabPerDollar, faabValue, faabOf, depthFor, teamDepth, streamLevels, overWaiver, roleNotes, usageModel, sharePts, effOut, weekOfDate, defaultOut, DEFAULT_SETTINGS, newLeague, buildCtx, valuations, teamValue, evalTrade, findTrades, contextValues, lineupForWeek, sampleLeague, scoreComp, vorpQ, marketPrice, marketPrices, perspective, fanOf, teamMood, styleOf, styleWeights, perceive, outWeek, parseLeagueInput, espnApiUrl, extractJson, parseEspn, applyEspn, SIGNALS };

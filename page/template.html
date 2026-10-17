@@ -232,6 +232,45 @@ textarea { width: 100%; min-height: 110px; font-family: var(--mono); font-size: 
   .mast-meta { margin-left: 0; }
   .ctx-row { grid-template-columns: 7em 1fr 4.4em; }
 }
+
+/* start/sit: ranges, survival chart, profiles */
+.ss-head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: end; }
+.ss-vs { font-family: var(--display); font-weight: 600; color: var(--muted); padding-bottom: 6px; }
+.rbar { position: relative; height: 12px; min-width: 90px; }
+.rbar::before { content: ""; position: absolute; left: 0; right: 0; top: 5px; height: 2px; background: var(--surface-2); border-radius: 2px; }
+.rbar i { position: absolute; top: 3px; height: 6px; border-radius: 3px; }
+.rbar i.r90 { background: color-mix(in srgb, var(--muted) 35%, transparent); }
+.rbar i.r50 { top: 2px; height: 8px; background: color-mix(in srgb, var(--muted) 70%, transparent); }
+.rbar i.med { top: 0; height: 12px; width: 2px; border-radius: 1px; background: var(--ink); }
+.rbar i.QB { background: var(--qb); } .rbar i.RB { background: var(--rb); } .rbar i.WR { background: var(--wr); } .rbar i.TE { background: var(--te); }
+.rbar i.r90.QB, .rbar i.r90.RB, .rbar i.r90.WR, .rbar i.r90.TE { opacity: .35; }
+.slot-lab { font-family: var(--display); font-weight: 600; font-size: 12.5px; letter-spacing: .06em; color: var(--muted); white-space: nowrap; }
+tr.bench td { color: var(--muted); }
+tr.bench td .pname { font-weight: 500; }
+tr.swap-in td { background: var(--good-soft); }
+.tag.pf-ceil { background: var(--accent-soft); color: var(--accent); }
+.tag.pf-floor { background: var(--good-soft); color: var(--good); }
+.tag.pf-bal { background: var(--surface-2); color: var(--muted); font-weight: 500; }
+.ss-chart { width: 100%; height: auto; display: block; overflow: visible; touch-action: pan-y; }
+.ss-chart text { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
+.ss-chart .grid { stroke: var(--line); stroke-width: 1; }
+.ss-chart .axis { stroke: var(--muted); stroke-width: 1; }
+.ss-chart .need { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.ss-chart .needlab { fill: var(--ink); font-weight: 500; }
+.ss-chart .xh { stroke: var(--muted); stroke-width: 1; }
+.ss-viz { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; position: relative; }
+@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .ss-viz { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; } }
+:root[data-theme="dark"] .ss-viz { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; }
+.ss-key { display: inline-block; width: 16px; height: 0; border-top: 3px solid currentColor; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.ss-tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 9px; font-size: 12.5px; box-shadow: 0 2px 8px rgba(0,0,0,.12); display: none; min-width: 9em; z-index: 2; }
+.ss-tip b { font-family: var(--mono); font-weight: 500; }
+.ss-tip .row { gap: 6px; flex-wrap: nowrap; }
+.pplay { font-family: var(--mono); font-size: 12px; }
+.pplay.low { color: var(--bad); } .pplay.mid { color: var(--warn); }
+.why { font-size: 12.5px; color: var(--muted); white-space: normal; }
+#panel-startsit .stack > *, #panel-startsit .box > *, #ssCalc, #ssMatch, #ssBoardBox, .ss-viz { min-width: 0; }
+@media (max-width: 560px) { .ss-chart text { font-size: 19px; } }
+tr.locked td { opacity: .75; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 
@@ -248,6 +287,7 @@ textarea { width: 100%; min-height: 110px; font-family: var(--mono); font-size: 
     <nav class="tabs" role="tablist" aria-label="Sections">
       <button role="tab" data-tab="trade" id="tab-trade">Trade</button>
       <button role="tab" data-tab="finder" id="tab-finder">Trade finder</button>
+      <button role="tab" data-tab="startsit" id="tab-startsit">Start/Sit</button>
       <button role="tab" data-tab="teams" id="tab-teams">Teams</button>
       <button role="tab" data-tab="players" id="tab-players">Players</button>
       <button role="tab" data-tab="league" id="tab-league">League</button>
@@ -259,6 +299,7 @@ textarea { width: 100%; min-height: 110px; font-family: var(--mono); font-size: 
 <main class="wrap">
   <section class="panel" id="panel-trade" role="tabpanel" aria-labelledby="tab-trade"></section>
   <section class="panel" id="panel-finder" role="tabpanel" aria-labelledby="tab-finder" hidden></section>
+  <section class="panel" id="panel-startsit" role="tabpanel" aria-labelledby="tab-startsit" hidden></section>
   <section class="panel" id="panel-teams" role="tabpanel" aria-labelledby="tab-teams" hidden></section>
   <section class="panel" id="panel-players" role="tabpanel" aria-labelledby="tab-players" hidden></section>
   <section class="panel" id="panel-league" role="tabpanel" aria-labelledby="tab-league" hidden></section>

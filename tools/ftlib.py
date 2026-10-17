@@ -11,6 +11,10 @@ PARAMS_LINE = re.compile(r"^const PARAMS = \{.*\};$", re.M)
 
 ANNUAL_PATH = os.path.join(ROOT, "params", "annual.json")
 ENV_K_LINE = re.compile(r"^const ENV_K = \{.*\};$", re.M)
+DIST_PATH = os.path.join(ROOT, "params", "dist.json")
+DIST_LINE = re.compile(r"^const DIST = \{.*\};$", re.M)
+# what the page needs from params/dist.json (the fit's checks and data list stay in the file)
+DIST_KEYS = ["version", "fitted", "team", "game", "player", "play", "mean", "pplay", "kdst"]
 
 # game-environment elasticities (log change per unit of implied-total change x, and per spread point):
 # params/annual.json env_k (refitted yearly); these literals are version 1, also the fallback in engine.js
@@ -40,10 +44,16 @@ def engine_params(vals):
     return {k: vals[k] for k in ENGINE_KEYS if k in vals}
 
 
-def engine_source(vals=None, src=None, env_k=None):
+def load_dist(path=None):
+    p = path or os.environ.get("FT_DIST") or DIST_PATH
+    return json.load(open(p)) if os.path.exists(p) else None
+
+
+def engine_source(vals=None, src=None, env_k=None, dist=None):
     """engine.js with its PARAMS line set from the given values (default: the params file) and, for the current
     engine (src None) or when env_k is given, its ENV_K line from params/annual.json. An archived engine keeps
-    the ENV_K it ran with unless env_k is passed."""
+    the ENV_K it ran with unless env_k is passed. The current engine also gets its DIST line (the start/sit
+    distribution model) from params/dist.json; archived engines from before it have none and keep theirs."""
     current = src is None
     src = src if src is not None else open(ENGINE_PATH).read()
     vals = vals if vals is not None else values(load_params_file())
@@ -56,6 +66,12 @@ def engine_source(vals=None, src=None, env_k=None):
         assert len(ENV_K_LINE.findall(out)) == 1, "engine.js must have exactly one ENV_K line"
         kl = "const ENV_K = " + json.dumps({k: list(v) for k, v in env_k.items()}, separators=(",", ":")) + ";"
         out = ENV_K_LINE.sub(lambda m: kl, out, count=1)
+    if dist is None and current:
+        dist = load_dist()
+    if dist is not None and DIST_LINE.search(out):
+        assert len(DIST_LINE.findall(out)) == 1, "engine.js must have exactly one DIST line"
+        dl = "const DIST = " + json.dumps({k: dist[k] for k in DIST_KEYS if k in dist}, separators=(",", ":")) + ";"
+        out = DIST_LINE.sub(lambda m: dl, out, count=1)
     return out
 
 

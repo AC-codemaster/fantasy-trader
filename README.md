@@ -13,7 +13,8 @@ improvement loop that tunes the model on its own.
 |---|---|
 | `engine/engine.js` | valuation engine (projections, market view, trade evaluation); one `PARAMS` line holds its tuned constants |
 | `page/template.html`, `page/ui.js` | the page shell and UI code; `tools/make_page.py` assembles the published page |
-| `pipeline/build_db.py` | builds the weekly player database (usage shares, efficiency, injuries, expert ranks) |
+| `pipeline/build_db.py` | builds the weekly player database (usage shares, efficiency, injuries and this week's game status, game-day inactives, expert ranks) |
+| `dist/`, `params/dist.json` | weekly points distributions behind the Start/Sit tab: the reference simulation (`sim.py`), its fit and checks (`fit_dist.py`, `bt_frames.py`), the fitted numbers; `docs/start-sit.md` |
 | `pipeline/scorecard.py` | freezes each week's projections and grades them (incl. hindsight and rest of season) |
 | `params/params.json` | every tuned constant, with bounds and step; the only file the improvement loop edits |
 | `params/annual.json` | constants refitted once a year (aging curves, game-environment elasticities, low-volume cuts, FAAB thresholds), read by the builder, backtest and engine; `tools/annual_refit.py` |
@@ -24,7 +25,7 @@ improvement loop that tunes the model on its own.
 | `data/inputs/<season>/w<week>/` | what the page ran on each week (db, injuries, params, engine): replayable |
 | `data/freeze`, `data/ros`, `data/graded`, `data/scorecard` | frozen projections, grades, scorecard data |
 | `tests/` | checks that must pass before publishing (page parity, trade-engine regressions, season grouping, gate) |
-| `runbooks/` | `weekly.md` (the Tuesday scheduled task), `saturday.md`, `improve-agent.md` (structural changes), `rollover.md`, and the offseason tasks: `rookie-draft.md` (May), `annual-refit.md` (February, with the sealed holdout), `trade-autopsy.md` (January) |
+| `runbooks/` | `weekly.md` (the Tuesday scheduled task), `gameday.md` (Thursday night and Sunday morning pre-kickoff refreshes, with inactives), `improve-agent.md` (structural changes), `rollover.md`, and the offseason tasks: `rookie-draft.md` (May), `annual-refit.md` (February, with the sealed holdout), `trade-autopsy.md` (January); `saturday.md` is retired |
 | `tools/trade_autopsy.py` | every trade in a league: the model at the trade date vs what each side gained; acceptance re-graded |
 
 ## The weekly loop
@@ -33,6 +34,10 @@ Every Tuesday morning a scheduled task runs `runbooks/weekly.md`: download the w
 injuries, grade last week's frozen projections (also rerun with who actually played, so news after
 Tuesday isn't blamed on the model), run the improvement loop, rebuild with the live parameters, test,
 publish the page, freeze this week's projections and archive their inputs, publish the scorecard, commit.
+
+Two more scheduled runs follow `runbooks/gameday.md` before games lock: Thursday about 6:52 pm ET (after the
+Thursday game's inactives) and Sunday about 11:37 am ET (after the 1 pm inactives). They fold in the final injury
+reports and game-day inactives, republish the page and freeze a pre-kickoff snapshot for the scorecard.
 
 The improvement loop adopts at most one parameter change a week, only when it clearly lowers the
 average miss over two-plus seasons of backtest weeks, and re-checks every adopted change on the weeks

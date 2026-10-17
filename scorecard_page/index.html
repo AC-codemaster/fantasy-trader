@@ -246,11 +246,11 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
       <p class="lede">Bold numbers are ours. Ranges are 95% intervals; a verdict needs the whole interval on one side of zero. Fantasy-relevant players who played, PPR scoring.</p>
       <div class="grid2">
         ${vsCard("Against FantasyPros, Tuesday", "Their first rankings of the week: the same information we froze with. This measures the model itself.", c.page_vs_early)}
-        ${vsCard("Against FantasyPros, final", "Their last consensus before each kickoff, with the whole week's news, against our page after the Saturday refresh.", c.late_vs_final || c.page_vs_final)}
+        ${vsCard("Against FantasyPros, final", "Their last consensus before each kickoff, with the whole week's news, against our page as it stood right before each kickoff (the latest pre-game injury refresh).", c.late_vs_final || c.page_vs_final)}
       </div>
       <div class="grid2">
         ${goalBox(G.model, "Model goal", `Beat FantasyPros' Tuesday consensus by at least ${(G.model || {}).maeTargetPct || 3}% in average miss with 95% confidence, and make more right start/sit calls, over at least ${(G.model || {}).needWeeks || 6} graded weeks.`)}
-        ${goalBox(G.product, "Product goal", "Our page after the Saturday refresh (Friday's final injury reports) against FantasyPros' final consensus, which has all the week's injury news. Same bar.")}
+        ${goalBox(G.product, "Product goal", "Our page right before each kickoff (Thursday and Sunday injury refreshes, game-day inactives) against FantasyPros' final consensus, which has all the week's injury news. Same bar.")}
       </div>
       ${news ? `<p class="lede">Knowing who would play changes our average miss by <b>${sgn(news.diff)}</b> points (${f(news.a)} with hindsight vs ${f(news.b)} on Tuesday): that part of the miss is news after Tuesday, not the model.</p>` : ""}
     </section>`;
