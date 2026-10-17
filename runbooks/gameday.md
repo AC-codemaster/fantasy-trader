@@ -26,9 +26,9 @@ later games, so publish late rather than not at all, and say so in the report.
   folders) and the project doc `claude/injury_news.json`; copy it to `injury_news.json`.
 
 ## 2. Game-day inactives (the reason this run exists)
-Teams post inactives 90 minutes before kickoff. From `games.csv`, list this week's games whose kickoff
-(America/New_York) is at or before now + 80 minutes, and whose kickoff was no more than 5 hours ago (finished
-games don't matter). For each of those games:
+Teams post inactives 90 minutes before kickoff. From `games.csv`, list this week's games whose inactives are due
+(kickoff minus 90 minutes, America/New_York, is at or before now) and whose kickoff was no more than 5 hours ago
+(finished games don't matter). For each of those games:
 - WebSearch `NFL Week <W> inactives` and WebFetch the CBS Sports or NFL.com live inactives tracker if one comes
   up (one page covers every game); fill any team it lacks with that team's own site (`<Team> inactives week
   <W>`, e.g. neworleanssaints.com/news/...inactives...), ESPN or Yahoo. Use a list only if the source names it
@@ -38,7 +38,9 @@ games don't matter). For each of those games:
   inactive player the source lists (all positions are fine; names as the source gives them), and team codes
   as in `games.csv` (LA, JAX, WAS ...). Include a team only when you found its list; an empty list means you
   found it and nobody notable is inactive. Teams not in the file stay as the injury report has them.
-- If none are posted yet (an early run), skip this step: Questionable players keep their chance to play.
+- A list that isn't up yet (sources lag a few minutes): look again after the CBS pages (step 3); if it's still
+  missing, leave that team out, and its Questionable players keep their chance to play. With no game due
+  (a catch-up run), skip this step and write no `gameday.json`.
 
 ## 3. Injury reports
 - CBS Sports team injury pages, all 32 teams: exactly step 2 of `runbooks/weekly.md` (→ `cbs_injuries.tsv`).
@@ -76,3 +78,39 @@ archived inputs: `cp gameday.json ../data/inputs/<S>/w<WW>/<tag>/` (the freeze c
 ## 8. Report (a few lines)
 When it published (and whether that was before kickoff), the teams whose inactives were included and any
 notable inactive or newly ruled-out fantasy starters, Questionable starters still open, and anything that failed.
+
+## Special game days
+The recurring tasks cover Thursday night (6:52 pm ET), Sunday mornings with an international game (8:07 am,
+skipped in other weeks) and Sunday 1 pm (11:37 am). Any other game day (Thanksgiving's daytime games, Black
+Friday, Christmas, late-season Saturdays, a Wednesday game) gets a one-time scheduled task, created by the weekly
+run (`runbooks/weekly.md` step 10b) when it doesn't exist yet:
+- time: the day's first kickoff minus 83 minutes, America/New_York (`run_once_at` in UTC);
+- name: `Fantasy Trader pre-kickoff refresh (<Weekday> <Mon> <D>)`;
+- tag: `late-<3-letter weekday>`, but `late-thu-am` for a Thursday daytime game (the Thursday night run keeps
+  `late-thu`);
+- prompt (fill in the `<...>`):
+
+> Run the Fantasy Trader pre-kickoff refresh for <Weekday> <Mon> <D>'s games (<away at home, kickoff ET; ...>):
+> right after the first game's inactives (about <kickoff − 90 min> ET), fold the latest injury reports and the
+> inactives into the page, republish it before the <first kickoff> ET kickoff, and freeze that version as a
+> pre-kickoff snapshot.
+>
+> Page: https://claude.ai/artifact/QYtsAKr3WaL59s1xWMcw1C · Repo: github.com/AC-codemaster/fantasy-trader (private)
+>
+> 1. Download https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv (curl) and check that a
+>    game still kicks off today within the next 3 hours (games get flexed or moved); if not, stop with a
+>    one-line report.
+> 2. Call add_repo with owner "AC-codemaster", repo "fantasy-trader", access "push". Clone it (git clone
+>    https://github.com/AC-codemaster/fantasy-trader; generous timeout) and cd into it.
+> 3. Read runbooks/gameday.md and follow it exactly. The snapshot tag is <tag>.
+>
+> Deadline: publish by <first kickoff − 15 min> ET. If you're running late, skip the optional steps and
+> publish; a page published after kickoff still helps the later games, so publish late rather than not at all
+> and say so.
+>
+> Rules: no grading, no improvement loop, no parameter changes. Never publish partial or obviously wrong data;
+> tests must pass before publishing. Never edit frozen weeks or archived inputs and never pass --force. Don't
+> touch the page's saved leagues or capabilities. If there's no Tuesday freeze for the week, still publish the
+> page and skip only the freeze. If the repo can't be attached or a push is refused, report it plainly with the
+> exact error; after pushing, check that origin/main equals your commit. Finish with a few lines: when it
+> published, the inactives included, notable ruled-out fantasy starters, and anything that failed.

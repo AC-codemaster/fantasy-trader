@@ -100,6 +100,13 @@ frozen, week N−1 graded". On a conflict, re-read and repeat once.
   `data/scorecard/scorecard.md`; `claude/model-changelog.md` ← `ledger/changelog.md`;
   `claude/injury_news.json` ← `work/injury_news.json`.
 
+## 10b. Special game days
+If this week has games on a day other than Sunday, Monday or Thursday night (Thanksgiving's daytime games, Black
+Friday, Christmas, late-season Saturdays, a Wednesday game; check `games.csv`), make sure each such day has its
+one-time pre-kickoff task: `list_triggers`, and if no task named `Fantasy Trader pre-kickoff refresh (<Weekday>
+<Mon> <D>)` exists for that date, create it as `runbooks/gameday.md` "Special game days" describes. Mention any
+task you created in the report.
+
 ## 11. Report
 A short summary: data week; notable injury changes; last week's average miss for our page vs FantasyPros
 Tuesday vs FantasyPros final, and with hindsight; start/sit %; the goal lines; what the improvement loop

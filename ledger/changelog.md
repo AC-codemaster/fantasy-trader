@@ -65,3 +65,7 @@ best injury news right before Thursday night and Sunday games.
 - Runbooks: `gameday.md` (Thursday ~6:52 pm and Sunday ~11:37 am ET, after inactives) replaces the Saturday run;
   `weekly.md` recalibrates the distribution means after the improvement loop (5b) and checks the push landed;
   `annual-refit.md` refits the distributions (7b).
+- Scheduled pre-kickoff runs: Thursday 6:52 pm, Sunday 8:07 am (international weeks only), Sunday 11:37 am ET,
+  plus one-time runs for this season's other game days (Wed Nov 25, Thanksgiving daytime, Fri Nov 27, Sat Dec 19,
+  Christmas); `weekly.md` step 10b creates any that are missing (flexed Saturday games, later seasons). On Oct 17 the
+  Sunday task was also fired once as a Saturday catch-up (`late-sat`) to publish the new page.

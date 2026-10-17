@@ -35,9 +35,11 @@ injuries, grade last week's frozen projections (also rerun with who actually pla
 Tuesday isn't blamed on the model), run the improvement loop, rebuild with the live parameters, test,
 publish the page, freeze this week's projections and archive their inputs, publish the scorecard, commit.
 
-Two more scheduled runs follow `runbooks/gameday.md` before games lock: Thursday about 6:52 pm ET (after the
-Thursday game's inactives) and Sunday about 11:37 am ET (after the 1 pm inactives). They fold in the final injury
-reports and game-day inactives, republish the page and freeze a pre-kickoff snapshot for the scorecard.
+More scheduled runs follow `runbooks/gameday.md` before games lock: Thursday about 6:52 pm ET (after the
+Thursday game's inactives), Sunday about 8:07 am ET in weeks with a morning international game, and Sunday about
+11:37 am ET (after the 1 pm inactives). They fold in the final injury reports and game-day inactives, republish
+the page and freeze a pre-kickoff snapshot for the scorecard. Other game days (Thanksgiving, Christmas,
+late-season Saturdays) get one-time runs, created by the weekly run when missing (`weekly.md` step 10b).
 
 The improvement loop adopts at most one parameter change a week, only when it clearly lowers the
 average miss over two-plus seasons of backtest weeks, and re-checks every adopted change on the weeks

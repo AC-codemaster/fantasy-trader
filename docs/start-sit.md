@@ -6,6 +6,20 @@ Reference implementation and fitting: `dist/sim.py`, `dist/fit_dist.py`, `dist/b
 same model (`engine/engine.js`: `simWeek`, `pPlay`, `startSit`, `needCalc`); fitted numbers in `params/dist.json`
 (written into the engine's `DIST` line by `tools/ftlib.py`).
 
+## On the page (Start/Sit tab)
+
+- **Lineup**: pick your team and opponent (an ESPN import with `view=mMatchup` fills in this week's opponent).
+  Shows the chance to win with the best lineup and with the highest-projection lineup, the projected score with
+  10th–90th percentile ranges for both sides, every starter's range bar (10th, median, 90th) and chance to play,
+  and each suggested swap with its reason (might not play, range suits the matchup). Players whose game has
+  started are locked.
+- **Floor vs ceiling: who gets you the points you need?** Pick candidates and the points you need (or the
+  deficit, with the players each side still has to play); for each candidate, the chance he gets you there, and
+  a chart of his chance of at least x points. Where two curves cross is the target at which the steadier player
+  stops being the better bet.
+- **Floors and ceilings, every player**: a sortable board (projection, median, 10th/90th percentile, chance of a
+  big week, chance to play).
+
 ## The model (first principles)
 
 For each team-game, a few thousand times:
@@ -93,7 +107,14 @@ had stopped and the CBS pages weren't read).
 
 ## Refreshes
 
-`runbooks/gameday.md`: Thursday about 6:52 pm ET (after the Thursday game's inactives) and Sunday about 11:37 am
-ET (after the 1 pm inactives). Each folds in CBS pages, the NFL report, and game-day inactives posted so far,
-republishes, and freezes a pre-kickoff snapshot (`late-thu`, `late-sun`, ...). The scorecard's "late" view takes,
-for each player, the latest snapshot frozen before his kickoff.
+`runbooks/gameday.md`: Thursday about 6:52 pm ET (after the Thursday game's inactives), Sunday about 8:07 am ET
+only in weeks with a morning international game (it checks `games.csv` and stops otherwise), and Sunday about
+11:37 am ET (after the 1 pm inactives). Each folds in CBS pages, the NFL report, and game-day inactives posted so
+far, republishes, and freezes a pre-kickoff snapshot (`late-thu`, `late-sun-am`, `late-sun`; a catch-up run on
+another day uses `late-<weekday>`). The scorecard's "late" view takes, for each player, the latest snapshot
+frozen before his kickoff. The Saturday refresh (`runbooks/saturday.md`) is retired: its scheduled task now runs
+on Sunday mornings.
+
+Not covered by a dedicated run yet: Thanksgiving's afternoon games (the Thursday run comes after them, so those
+players have only Tuesday's page), the late-season Saturday games, and inactives for the 4 pm and night games
+(those players get the Sunday-morning reports, without the game-day list).
