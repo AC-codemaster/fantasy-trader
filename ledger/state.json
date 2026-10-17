@@ -1,5 +1,5 @@
 {
- "rotation": 0,
+ "rotation": 2,
  "probation": [
   {
    "change": {
@@ -23,13 +23,25 @@
    "since": "2026-w05",
    "kind": "backtest",
    "version": 2
+  },
+  {
+   "change": {
+    "rookie_prior": [
+     0.0,
+     0.25
+    ]
+   },
+   "since": "2026-w06",
+   "kind": "backtest",
+   "version": 3
   }
  ],
  "lastRun": {
-  "date": "2026-10-10",
-  "week": "2026-w05",
-  "tested": 5,
-  "adopted": "damp 0.3 \u2192 0.35, env_scale 1 \u2192 1.1, w1 0.8 \u2192 0.7, low_target 2 \u2192 2.25",
-  "parity": null
+  "date": "2026-10-13",
+  "week": "2026-w06",
+  "tested": null,
+  "adopted": "rookie_prior 0 \u2192 0.25",
+  "parity": null,
+  "note": "recovered 2026-10-17 (that run's push was lost)"
  }
 }

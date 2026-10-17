@@ -1,6 +1,6 @@
 {
-  "version": 2,
-  "updated": "2026-10-10",
+  "version": 3,
+  "updated": "2026-10-13",
   "note": "Tuned model constants. Values here are the live model. The weekly improvement loop (improve/improve.py) proposes changes, tests them, and edits this file only when a change passes the gate; every edit is logged in ledger/changelog.md and ledger/experiments.jsonl. Layer says where a value is used: builder = pipeline/build_db.py (and backtest/backtest_core.py), engine = engine/engine.js. Eval says how a change is tested: backtest = multi-season replay with known availability; live = replay of archived weekly inputs (needs enough graded weeks).",
   "params": {
     "prior_games": {"value": 3.0, "min": 1.0, "max": 8.0, "step": 0.5, "layer": "builder", "eval": "backtest", "desc": "Games of weight behind last season's usage share"},
@@ -12,7 +12,7 @@
     "w1":          {"value": 0.7, "min": 0.3, "max": 1.2, "step": 0.1, "layer": "builder", "eval": "backtest", "desc": "Weight of last season's opportunities in efficiency"},
     "w2":          {"value": 0.4, "min": 0.0, "max": 0.8, "step": 0.1, "layer": "builder", "eval": "backtest", "desc": "Weight of the season before last in efficiency"},
     "low_target":  {"value": 2.25, "min": 0.5, "max": 4.0, "step": 0.25, "layer": "builder", "eval": "backtest", "desc": "Scale on opportunities needed before efficiency shrinks to the full-league rate instead of the low-volume rate"},
-    "rookie_prior":{"value": 0.0, "min": 0.0, "max": 1.0, "step": 0.25, "layer": "builder", "eval": "backtest", "new": true, "desc": "Weight on the rookie model's share and efficiency prior for drafted rookies with no NFL history (data/rookie/predictions.csv); 0 = none"},
+    "rookie_prior":{"value": 0.25, "min": 0.0, "max": 1.0, "step": 0.25, "layer": "builder", "eval": "backtest", "desc": "Weight on the rookie model's share and efficiency prior for drafted rookies with no NFL history (data/rookie/predictions.csv); 0 = none"},
     "K_ypa":       {"value": 150, "min": 40, "max": 600, "mult": 1.25, "layer": "builder", "eval": "backtest", "desc": "Shrinkage (attempts) for yards per attempt"},
     "K_ptd":       {"value": 250, "min": 60, "max": 1000, "mult": 1.25, "layer": "builder", "eval": "backtest", "desc": "Shrinkage (attempts) for passing TD rate"},
     "K_int":       {"value": 300, "min": 75, "max": 1200, "mult": 1.25, "layer": "builder", "eval": "backtest", "desc": "Shrinkage (attempts) for interception rate"},
