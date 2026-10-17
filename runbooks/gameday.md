@@ -63,8 +63,8 @@ games don't matter). For each of those games:
 ## 6. Freeze the snapshot
 `python3 ../pipeline/scorecard.py freeze --page fantasy-trader.html --tag <tag> --cbs cbs_injuries.tsv --version <version id>`
 (players whose game already kicked off are left out; never `--force`). If it says there is no Tuesday freeze
-for the week, skip it and say so in the report. Also copy `gameday.json` next to the archived inputs:
-`cp gameday.json ../data/inputs/<S>/w<WW>/<tag>/` (the freeze creates that folder).
+for the week, skip it and say so in the report. If you wrote `gameday.json` (step 2), also copy it next to the
+archived inputs: `cp gameday.json ../data/inputs/<S>/w<WW>/<tag>/` (the freeze creates that folder).
 
 ## 7. Save
 - From the repo root: `git add -A data` then commit ("Week N: <weekday> pre-kickoff refresh (<tag>)") and push.
