@@ -1,0 +1,190 @@
+{
+ "updated": "2026-10-18T11:54:35-04:00",
+ "teams": {
+  "HOU": {
+   "inactive": [
+    "Jalen Pitre",
+    "David Montgomery",
+    "Sabastian Harsh",
+    "Febechi Nwaiwu",
+    "Braden Smith",
+    "Nate Thomas",
+    "Marlin Klein"
+   ],
+   "src": "nfl.com"
+  },
+  "JAX": {
+   "inactive": [
+    "Montaric Brown",
+    "CJ Williams",
+    "Jalen Huskey",
+    "Jaylon Jones",
+    "Ross Matiscik",
+    "Wesley Williams",
+    "Albert Regis"
+   ],
+   "src": "nfl.com"
+  },
+  "CHI": {
+   "inactive": [
+    "Case Keenum",
+    "Kyle Monangai",
+    "Tyrique Stevenson",
+    "Keyshaun Elliott",
+    "T.J. Edwards",
+    "Jordan McFadden",
+    "Jayden Loving"
+   ],
+   "src": "nfl.com"
+  },
+  "ATL": {
+   "inactive": [
+    "Cooper Rush",
+    "Jack Strand",
+    "C.J. Henderson",
+    "Malcolm DeWalt IV",
+    "Christian Harris",
+    "Ethan Onianwa",
+    "Drake Jackson"
+   ],
+   "src": "nfl.com"
+  },
+  "BAL": {
+   "inactive": [
+    "Lamar Jackson",
+    "Elijah Sarratt",
+    "K'Von Wallace",
+    "Cam Jurgens",
+    "Andrew Vorhees",
+    "Matthew Hibner",
+    "Broderick Washington"
+   ],
+   "src": "nfl.com"
+  },
+  "CLE": {
+   "inactive": [
+    "Quinshon Judkins",
+    "Taylen Green",
+    "Noah Igbinoghene",
+    "Mike Hall Jr.",
+    "Parker Brailsford",
+    "Teven Jenkins",
+    "Mason Graham"
+   ],
+   "src": "nfl.com"
+  },
+  "TEN": {
+   "inactive": [
+    "Kevin Winston Jr.",
+    "Alontae Taylor",
+    "Nick Singleton",
+    "Brandon Crenshaw-Dickson",
+    "Kylen Granson",
+    "Jordan Elliott",
+    "Jackie Marshall"
+   ],
+   "src": "nfl.com"
+  },
+  "IND": {
+   "inactive": [
+    "Jaylon Carlies",
+    "Ashton Dulin",
+    "Riley Leonard",
+    "Dalton Tucker",
+    "Tyler Warren"
+   ],
+   "src": "nfl.com"
+  },
+  "NYJ": {
+   "inactive": [
+    "Breece Hall",
+    "Jack Heflin",
+    "Adonai Mitchell",
+    "Joseph Ossai",
+    "Dylan Parham",
+    "Nahshon Wright"
+   ],
+   "src": "nfl.com"
+  },
+  "NE": {
+   "inactive": [
+    "Carlton Davis",
+    "Karon Prunty",
+    "Channing Canada",
+    "Dametrious Crownover",
+    "Tanner Arkin",
+    "Behren Morton"
+   ],
+   "src": "nfl.com"
+  },
+  "NO": {
+   "inactive": [
+    "Zach Wilson",
+    "Anfernee Jennings",
+    "Mike Reid",
+    "Kaden Elliss",
+    "Nathan Shepherd",
+    "John Ridgeway III"
+   ],
+   "src": "nfl.com"
+  },
+  "NYG": {
+   "inactive": [
+    "Colton Hood",
+    "Jake Haener",
+    "Tyler Nubin",
+    "Jermaine Eluemunor",
+    "Theo Johnson",
+    "C.J. Okoye"
+   ],
+   "src": "nfl.com"
+  },
+  "CAR": {
+   "inactive": [
+    "Ja'Tavion Sanders",
+    "Haynes King",
+    "AJ Dillon",
+    "Monroe Freeling",
+    "Torricelli Simpkins",
+    "Albert Reese",
+    "TeRah Edwards"
+   ],
+   "src": "nfl.com"
+  },
+  "PHI": {
+   "inactive": [
+    "Hollywood Brown",
+    "Joe Milton",
+    "Saquon Barkley",
+    "Michael Carter II",
+    "A.J. Epenesa",
+    "Jalyx Hunt"
+   ],
+   "src": "nfl.com"
+  },
+  "PIT": {
+   "inactive": [
+    "Ben Skowronek",
+    "Drew Allar",
+    "Will Howard",
+    "Sean Murphy-Bunting",
+    "Eli Heidenreich",
+    "Terell Smith",
+    "Kevin Jobity Jr."
+   ],
+   "src": "nfl.com"
+  },
+  "TB": {
+   "inactive": [
+    "Baker Mayfield",
+    "Benjamin Morrison",
+    "Antoine Winfield Jr.",
+    "Sean Tucker",
+    "Luke Haggard",
+    "Billy Schrauth",
+    "DeMonte Capehart"
+   ],
+   "src": "nfl.com"
+  }
+ }
+}
