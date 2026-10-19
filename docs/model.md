@@ -8,3 +8,6 @@ since is in `ledger/changelog.md`.
 
 Start/sit (weekly points distributions, chance to win, floor vs ceiling, chance he plays, pre-kickoff refreshes):
 `docs/start-sit.md` (Oct 17, 2026).
+
+Kickers and team defenses (projections from the Vegas lines and their histories, scoring, start/sit simulation,
+trade values, grading and tuning): `docs/kdst.md` (Oct 19, 2026).

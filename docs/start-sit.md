@@ -90,9 +90,11 @@ Doubtful 1.2%; on the practice report with no game status 97%; unlisted 99.5%; a
 ## Lineups and decisions
 
 - `startSit`: opponent = his highest-projection lineup, discounted by the chance each plays; your best lineup by
-  local search over one-for-one swaps from the highest-projection lineup, maximizing P(your starters + noise >
-  theirs). Noise: kickers and team defenses, unmodeled, with the kicker's week-to-week spread from box scores
-  (4.7 pts) and a typical 6 for defenses, on both sides. Players whose game started are locked (ESPN lineup slot
+  local search over one-for-one swaps from the highest-projection lineup, maximizing P(your starters > theirs),
+  kickers and defenses included (since Oct 19, 2026; `simKd`, see `docs/kdst.md`: PATs follow the kicker's offense's
+  simulated touchdowns, points and yards allowed follow the opposing offense). Data built before then has no
+  kickers or defenses: their slots are left out and their week-to-week spread is added to both sides as noise
+  (box scores: 4.6 pts for kickers, 6.4 for defenses). Players whose game started are locked (ESPN lineup slot
   from a this-week import, else where the projection lineup puts them).
 - `needCalc`: for each candidate, P(candidate + your other players still to play − theirs + noise > deficit);
   with nobody else, P(points > need). The page draws each candidate's P(points ≥ x).

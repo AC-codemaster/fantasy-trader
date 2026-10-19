@@ -10,7 +10,12 @@ branch, merge only when the tests pass.
    Keep the database fields the engine reads in step with step 2 (bump the db version `v`).
 2. `engine/engine.js` and `page/ui.js`: the same field renames (`g26`→ this season's games, `g25`/`g24`,
    `s25`/`s24` track-record components, `TRACK_W24`), and any "2026" text.
-3. `backtest/backtest_core.py`: already relative (S−2, S−1, S). `backtest/evaluate.py`: the evaluation
+2b. Kickers and defenses: `pipeline/kdst.py` is season-relative (it takes whatever seasons it's given); in the
+   builder the `RAW` dict of player stats is keyed by season year and follows the file renames, and the kicker
+   and D/ST records use `g26/g25/g24` and `s25/s24` like everyone (rename with the rest). ESPN's D/ST ids
+   (−16000 − ESPN team id) don't change. `tests/fixtures/db-kdst-w06.json` is a 2026 build: keep it as it is
+   (convert it once only if the engine stops reading the old field names).
+3. `backtest/backtest_core.py`: already relative (S−2, S−1, S). `backtest/kdst_backtest.py` too. `backtest/evaluate.py`: the evaluation
    window moves on its own (two previous seasons + current). Check `fetch_history.py` downloads them.
 4. `pipeline/scorecard.py`: already season-aware (keys are season + week). `FLAGS` uses `g26/g25/g24`:
    follow the renames.

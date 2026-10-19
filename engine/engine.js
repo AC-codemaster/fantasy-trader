@@ -1,14 +1,29 @@
 /* Fantasy Trader valuation engine. Pure functions; no DOM. */
 // Tuned constants. tools/make_page.py writes this line from params/params.json; the weekly improvement loop tunes them.
 const PARAMS = {"damp":0.3,"ret_disc":0.85,"env_scale":1,"expertWeight":0.2,"weeklyExpert":0.25};
-const POSITIONS = ["QB", "RB", "WR", "TE"];
+const POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"];
+const OFF_POS = ["QB", "RB", "WR", "TE"];        // the usage model's positions (team carries, targets, attempts)
+const KD_POS = ["K", "DST"];                      // kickers and team defenses: projected by the builder (pipeline/kdst.py)
+const POS_LABEL = { DST: "D/ST" };
 const FLEX_OK = { RB: 1, WR: 1, TE: 1 };
 const SCORE_KEYS = ["passYd", "passTd", "int", "rushYd", "rushTd", "rec", "recYd", "recTd", "fumble", "twoPt"];
+// Kicker and D/ST scoring. A kicker's weekly line is [PAT made, PAT missed, FG made 0-39, 40-49, 50-59, 60+, FG
+// missed 0-39, 40-49, 50+]; a D/ST's is [sacks, INTs, fumble recoveries, safeties, defensive TDs, return TDs,
+// blocked kicks, points allowed, yards allowed, then the chance of each points-allowed tier (ESPN's 0, 1-6, 7-13,
+// 14-17, 18-21, 22-27, 28-34, 35-45, 46+) and each yards-allowed tier (<100, 100-199, 200-299, 300-349, 350-399,
+// 400-449, 450-499, 500-549, 550+)]. Defaults: ESPN standard (pipeline/kdst.py STANDARD, kept equal by the tests).
+const K_KEYS = ["patMade", "patMiss", "fg0", "fg40", "fg50", "fg60", "fgMiss", "fgMiss0", "fgMiss40", "fgMiss50"];
+const D_KEYS = ["sack", "dInt", "fumRec", "safety", "dTd", "stTd", "blk", "ptsAllowed", "ydsAllowed"];
+const PA_TIERS = ["0", "1-6", "7-13", "14-17", "18-21", "22-27", "28-34", "35-45", "46+"];
+const YA_TIERS = ["<100", "100-199", "200-299", "300-349", "350-399", "400-449", "450-499", "500-549", "550+"];
 
 const DEFAULT_SETTINGS = {
   teams: 12,
-  scoring: { passYd: 0.04, passTd: 4, int: -2, rushYd: 0.1, rushTd: 6, rec: 1, recYd: 0.1, recTd: 6, fumble: -2, twoPt: 2, byPos: {} },
-  slots: { QB: 1, RB: 2, WR: 2, TE: 1, RBWR: 0, WRTE: 0, FLEX: 1, OP: 0 },
+  scoring: { passYd: 0.04, passTd: 4, int: -2, rushYd: 0.1, rushTd: 6, rec: 1, recYd: 0.1, recTd: 6, fumble: -2, twoPt: 2, byPos: {},
+    patMade: 1, patMiss: 0, fg0: 3, fg40: 4, fg50: 5, fg60: 6, fgMiss: -1, fgMiss0: 0, fgMiss40: 0, fgMiss50: 0,
+    sack: 1, dInt: 2, fumRec: 2, safety: 2, dTd: 6, stTd: 6, blk: 2, ptsAllowed: 0, ydsAllowed: 0,
+    paTier: [5, 4, 3, 1, 0, 0, -1, -3, -5], yaTier: [5, 3, 2, 0, -1, -3, -5, -6, -7] },
+  slots: { QB: 1, RB: 2, WR: 2, TE: 1, RBWR: 0, WRTE: 0, FLEX: 1, OP: 0, K: 1, DST: 1 },
   expertWeight: PARAMS.expertWeight,  // rest-of-season FantasyPros consensus (tuned by the improvement loop)
   weeklyExpert: PARAMS.weeklyExpert, // FantasyPros weekly rankings, current week only (tuned; skipped for players with an injury tag)
   waiver: true,       // every lineup can start the best available free agent ("streaming")
@@ -45,7 +60,26 @@ function newLeague(DB) {
   };
 }
 
+/* A league setting for kickers and defenses, falling back to ESPN standard when a saved league predates it. */
+function kdSet(sc, k) { const v = sc[k]; return v == null || v === "" ? DEFAULT_SETTINGS.scoring[k] : v; }
+function kScore(v, sc) {
+  const g = (k) => +kdSet(sc, k) || 0;
+  const miss = v[6] + v[7] + v[8];
+  return v[0] * g("patMade") + v[1] * g("patMiss") + v[2] * g("fg0") + v[3] * g("fg40") + v[4] * g("fg50") + v[5] * g("fg60")
+    + miss * g("fgMiss") + v[6] * g("fgMiss0") + v[7] * g("fgMiss40") + v[8] * g("fgMiss50");
+}
+function dScore(v, sc) {
+  const g = (k) => +kdSet(sc, k) || 0;
+  const pt = kdSet(sc, "paTier") || [], yt = kdSet(sc, "yaTier") || [];
+  let s = v[0] * g("sack") + v[1] * g("dInt") + v[2] * g("fumRec") + v[3] * g("safety") + v[4] * g("dTd") + v[5] * g("stTd") + v[6] * g("blk")
+    + v[7] * g("ptsAllowed") + v[8] * g("ydsAllowed");
+  for (let i = 0; i < 9; i++) s += (v[9 + i] || 0) * (+pt[i] || 0) + (v[18 + i] || 0) * (+yt[i] || 0);
+  return s;
+}
+
 function scoreComp(v, sc, pos) {
+  if (pos === "K") return kScore(v, sc);
+  if (pos === "DST") return dScore(v, sc);
   const bp = (sc.byPos && pos && sc.byPos[pos]) || null;
   let s = 0;
   for (let i = 0; i < SCORE_KEYS.length; i++) {
@@ -222,8 +256,8 @@ function usageModel(DB, L) {
   for (let w = cur; w <= +S.lastWeek; w++) weeks.push(w);
   const nW = weeks.length;
   const teams = DB.teams || {};
-  const byTeam = new Map();
-  for (const p of DB.players) { if (!byTeam.has(p.t)) byTeam.set(p.t, []); byTeam.get(p.t).push(p); }
+  const byTeam = new Map();   // the usage model's players (kickers and defenses have no share of the team's work)
+  for (const p of DB.players) { if (!p.m) continue; if (!byTeam.has(p.t)) byTeam.set(p.t, []); byTeam.get(p.t).push(p); }
   const outNow = new Map(DB.players.map((p) => [p.id, effOut(L, p, cur)]));
   const outEcr = (p) => (p.ij && p.ij.thru != null && !p.ij.nx && p.ij.thru >= cur ? p.ij.thru : null);
   const isOut = (o, w) => o != null && w <= o;
@@ -293,7 +327,30 @@ function usageModel(DB, L) {
       res.set(p.id, { now, ecr, full: sharePts(p, T, full[0], full[1], full[2], sc), fullW, avail, back: fNow.get(p.id), env });
     }
   }
+  kdModel(DB, L, weeks, outNow, res);
   return { weeks, res, byTeam, outNow, opp0, den0 };
+}
+
+/*
+ * Kickers and team defenses. The builder (pipeline/kdst.py) projects each one's stat line for every remaining week
+ * from the Vegas lines (his team's implied total for a kicker; the opponent's for a defense) and their histories;
+ * here they are scored with the league's settings, as if he plays, and marked unavailable on byes and out weeks.
+ * No teammate effects, so the experts' information state and full health are the same as now.
+ */
+function kdModel(DB, L, weeks, outNow, res) {
+  const sc = L.settings.scoring, nW = weeks.length;
+  for (const p of DB.players) {
+    if (p.m || !p.kw) continue;
+    const now = new Float64Array(nW), avail = [], byes = DB.byes[p.t] || [], o = outNow.get(p.id), T = (DB.teams || {})[p.t];
+    let s = 0, n = 0;
+    for (let wi = 0; wi < nW; wi++) {
+      const w = weeks[wi], v = p.kw[w];
+      now[wi] = v ? scoreComp(v, sc, p.p) : 0;
+      if (v) { s += now[wi]; n++; }
+      avail.push(!!v && !byes.includes(w) && !(o != null && w <= o));
+    }
+    res.set(p.id, { now, ecr: now, full: n ? s / n : 0, fullW: now, avail, back: new Array(nW).fill(1), env: weeks.map((w) => envMult(T, w)) });
+  }
 }
 
 function meanOver(arr, mask) {
@@ -441,7 +498,7 @@ function valuations(DB, L) {
 /* Teammate absences that change a player's role: how many points per game each one is worth to him. */
 function roleNotes(ctx, id) {
   const p = ctx.byId.get(id), U = ctx.val.usage;
-  if (!p || !U) return [];
+  if (!p || !U || !p.m) return [];
   const T = (ctx.DB.teams || {})[p.t];
   if (!T) return [];
   const mates = U.byTeam.get(p.t) || [];
@@ -543,6 +600,11 @@ function buildCtx(DB, L) {
   return ctx;
 }
 
+/* How the flex slots split among positions when counting starters (kickers and defenses fill only their own slot). */
+const SLOT_SHARE = { QB: { OP: 0.8 }, RB: { FLEX: 0.4, OP: 0.07, RBWR: 0.5 }, WR: { FLEX: 0.5, OP: 0.1, RBWR: 0.5, WRTE: 0.7 }, TE: { FLEX: 0.1, OP: 0.03, WRTE: 0.3 }, K: {}, DST: {} };
+/* Positions priced by a rank ladder in trades: easy to stream, so only the top few are worth much (see marketPrices). */
+const LADDER_POS = ["QB", "TE", "K", "DST"];
+
 /*
  * The market layer of a context: free-agent beliefs, replacement levels, the market's streamers,
  * trade values (marketPrices) and the points the other manager's lineup math runs on (ppg.n).
@@ -578,7 +640,7 @@ function applyMarket(c) {
   }
   c.faAdj = faAdj;
   // replacement level per position, for trade values
-  const share = { QB: { OP: 0.8 }, RB: { FLEX: 0.4, OP: 0.07, RBWR: 0.5 }, WR: { FLEX: 0.5, OP: 0.1, RBWR: 0.5, WRTE: 0.7 }, TE: { FLEX: 0.1, OP: 0.03, WRTE: 0.3 } };
+  const share = SLOT_SHARE;
   const repl = {};
   for (const pos of POSITIONS) {
     let starters = +S.slots[pos] || 0;
@@ -723,7 +785,7 @@ function marketPrices(ctx) {
   }));
   const plays = (p) => ctx.val.get(p.id).plays;
   // reference replacement: the starter line in a 12-team one-QB league
-  const share = { QB: { OP: 0.8 }, RB: { FLEX: 0.4, OP: 0.07, RBWR: 0.5 }, WR: { FLEX: 0.5, OP: 0.1, RBWR: 0.5, WRTE: 0.7 }, TE: { FLEX: 0.1, OP: 0.03, WRTE: 0.3 } };
+  const share = SLOT_SHARE;
   const N = {}, replR = {};
   for (const pos of POSITIONS) {
     let st = +D.slots[pos] || 0;
@@ -772,13 +834,14 @@ function marketPrices(ctx) {
     const marR = top(qR).reduce((s, p) => s + Math.max(0, qR.get(p.id) - replR[pos]), 0);
     const marL = top(ppg.q).reduce((s, p) => s + Math.max(0, ppg.q.get(p.id) - repl[pos]), 0);
     u[pos] = marR > 1e-6 && marL > 1e-6 ? Math.max(0.25, Math.min(4, marL / marR)) : 1;
-    // QB/TE price ladder: what the consensus pays for the 1st, 2nd, ... best player at the position
-    if (pos === "QB" || pos === "TE") ladder[pos] = ps.map((p) => V(eo.get(p.id))).sort((a, b) => b - a);
+    // QB/TE/K/DST price ladder: what the consensus pays for the 1st, 2nd, ... best player at the position
+    // (the overall rankings list only the top few kickers and defenses, far down: most are worth nothing)
+    if (LADDER_POS.includes(pos)) ladder[pos] = ps.map((p) => V(eo.get(p.id))).sort((a, b) => b - a);
   }
-  // QB/TE: the market signals decide where he ranks at his position; the ladder decides what that
+  // QB/TE/K/DST: the market signals decide where he ranks at his position; the ladder decides what that
   // rank is worth. Near-ties share a price (managers can't tell QB4 from QB8 when they score alike).
   const rankPrice = {};
-  for (const pos of ["QB", "TE"]) {
+  for (const pos of LADDER_POS) {
     const qs = DB.players.filter((p) => p.p === pos && plays(p)).map((p) => ppg.q.get(p.id)).sort((a, b) => b - a);
     const L2 = ladder[pos], H = 1.0;
     rankPrice[pos] = (q) => {
@@ -816,8 +879,8 @@ function marketPrices(ctx) {
     if (p.p === "QB") v = (1 - b) * v + b * m;
     let prem = 0, proven = 0;
     const tr = ctx.val.get(p.id).sig.track;
-    // not for one-QB-league quarterbacks: certainty is cheap at a position you can stream
-    const pf = p.p === "QB" ? b : 1;
+    // not for one-QB-league quarterbacks, kickers or defenses: certainty is cheap at a position you can stream
+    const pf = p.p === "QB" ? b : KD_POS.includes(p.p) ? 0 : 1;
     if (TP > 0 && pf > 0 && v > 0 && tr && !(o.q != null && o.q !== "")) {
       proven = Math.max(0, Math.min(1, (tr.v - repl[p.p]) / Math.max(0.5, m)));
       prem = TP * pf * tr.full * proven * v;
@@ -938,10 +1001,11 @@ const _used = new Uint8Array(64);
 /*
  * Best legal lineup from players sorted by points (desc), as parallel arrays; optionally ignoring
  * one player. Fills dedicated slots first, then the narrow flex slots (RB/WR, WR/TE), then
- * FLEX (RB/WR/TE), then superflex. Position codes: 0 QB, 1 RB, 2 WR, 3 TE. Fills _st.
+ * FLEX (RB/WR/TE), then superflex. Position codes: 0 QB, 1 RB, 2 WR, 3 TE, 4 K, 5 D/ST (kickers and
+ * defenses only ever fill their own slot). Fills _st.
  */
 function lineupFast(pos, pts, n, skip, slots) {
-  let q = +slots.QB || 0, r = +slots.RB || 0, wr = +slots.WR || 0, te = +slots.TE || 0;
+  let q = +slots.QB || 0, r = +slots.RB || 0, wr = +slots.WR || 0, te = +slots.TE || 0, kk = +slots.K || 0, dd = +slots.DST || 0;
   let rbwr = +slots.RBWR || 0, wrte = +slots.WRTE || 0, flex = +slots.FLEX || 0, op = +slots.OP || 0;
   let total = 0, k = 0;
   const used = _used;
@@ -950,7 +1014,8 @@ function lineupFast(pos, pts, n, skip, slots) {
   for (let i = 0; i < n; i++) {
     if (i === skip) continue;
     const p = pos[i];
-    if (p === 0 && q > 0) q--; else if (p === 1 && r > 0) r--; else if (p === 2 && wr > 0) wr--; else if (p === 3 && te > 0) te--; else continue;
+    if (p === 0 && q > 0) q--; else if (p === 1 && r > 0) r--; else if (p === 2 && wr > 0) wr--; else if (p === 3 && te > 0) te--;
+    else if (p === 4 && kk > 0) kk--; else if (p === 5 && dd > 0) dd--; else continue;
     take(i);
   }
   if (rbwr > 0 || wrte > 0) {
@@ -963,11 +1028,11 @@ function lineupFast(pos, pts, n, skip, slots) {
     }
   }
   for (let i = 0; i < n && flex > 0; i++) {
-    if (i === skip || used[i] || pos[i] === 0) continue;
+    if (i === skip || used[i] || pos[i] === 0 || pos[i] > 3) continue;
     flex--; take(i);
   }
   for (let i = 0; i < n && op > 0; i++) {
-    if (i === skip || used[i]) continue;
+    if (i === skip || used[i] || pos[i] > 3) continue;
     op--; take(i);
   }
   return [total, k];
@@ -984,7 +1049,7 @@ function weekEV(pos, pts, n, slots, cushion) {
   return base - (1 - AVAIL_Q) * loss;
 }
 
-const POS_CODE = { QB: 0, RB: 1, WR: 2, TE: 3 };
+const POS_CODE = { QB: 0, RB: 1, WR: 2, TE: 3, K: 4, DST: 5 };
 
 /* Per-player numbers the engine needs, computed once per context: points in each remaining week
    (0 when he can't play) and a code per week that changes only when his points or availability do. */
@@ -1195,7 +1260,9 @@ function* findTrades(ctx, mine, opts) {
   const only = partnerIds && partnerIds.length ? new Set(partnerIds) : partnerId ? new Set([partnerId]) : null;
   const results = [], near = [];
   const useFaab = !!ctx.S.faab && !!ctx.DB.faabPool;
-  const keep = (id) => ctx.ppg.a.get(id) >= minPts || ctx.ppg.q.get(id) >= minPts;
+  // kickers and defenses stay out of the search (a kicker-for-kicker swap is rarely worth a message); the Trade
+  // tab values them like anyone else
+  const keep = (id) => !KD_POS.includes((ctx.byId.get(id) || {}).p) && (ctx.ppg.a.get(id) >= minPts || ctx.ppg.q.get(id) >= minPts);
   const myC = mine.roster.filter(keep);
   const partners = ctx.L.teams.filter((t) => t.id !== mine.id && (!only || only.has(t.id)));
   const pairs = (arr) => { const o = []; for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) o.push([arr[i], arr[j]]); return o; };
@@ -1289,23 +1356,26 @@ function sampleLeague(DB, seed) {
   const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
   const ctx = buildCtx(DB, L);
   const n = L.settings.teams;
-  const caps = { QB: 2, RB: 6, WR: 6, TE: 2 };
+  // one kicker and one defense per team, late, when the data has them (15 rounds of everyone else)
+  const kd = KD_POS.filter((pos) => DB.players.some((p) => p.p === pos));
+  const caps = { QB: 2, RB: 6, WR: 6, TE: 2, K: 1, DST: 1 };
   const need = { QB: 1, RB: 2, WR: 2, TE: 1 };
+  for (const pos of kd) need[pos] = 1;
   L.teams = Array.from({ length: n }, (_, i) => ({ id: "t" + (i + 1), name: i === 0 ? "My team" : "Team " + (i + 1), mine: i === 0, roster: [] }));
   const pool = DB.players.map((p) => ({ id: p.id, pos: p.p, v: (p.dr ? 40 - p.dr / 6 : 0) * 0.3 + (ctx.ppg.q.get(p.id) - ctx.repl[p.p]) }));
   const taken = new Set();
-  const rounds = 15;
+  const rounds = 15 + kd.length;
   for (let r = 0; r < rounds; r++) {
     const order = r % 2 === 0 ? L.teams : L.teams.slice().reverse();
     for (const t of order) {
-      const cnt = { QB: 0, RB: 0, WR: 0, TE: 0 };
+      const cnt = { QB: 0, RB: 0, WR: 0, TE: 0, K: 0, DST: 0 };
       for (const id of t.roster) cnt[ctx.byId.get(id).p]++;
       const roundsLeft = rounds - r;
       const missing = Object.keys(need).filter((k) => cnt[k] < need[k]);
       let cands = pool.filter((p) => !taken.has(p.id) && cnt[p.pos] < caps[p.pos]);
       if (missing.length >= roundsLeft) cands = cands.filter((p) => missing.includes(p.pos));
-      // QBs and TEs go later in real drafts; nudge them down, add a little noise
-      const adj = (p) => p.v * (p.pos === "QB" ? 0.55 : p.pos === "TE" ? 0.8 : 1) + (rnd() - 0.5) * 2.5;
+      // QBs and TEs go later in real drafts, kickers and defenses last; nudge them down, add a little noise
+      const adj = (p) => (KD_POS.includes(p.pos) ? -50 : 0) + p.v * (p.pos === "QB" ? 0.55 : p.pos === "TE" ? 0.8 : 1) + (rnd() - 0.5) * 2.5;
       cands.sort((x, y) => adj(y) - adj(x));
       const pick = cands[0];
       taken.add(pick.id);
@@ -1472,7 +1542,8 @@ function simWeek(ctx, ids, opts = {}) {
   const D = DIST, tm = D.team, gm = D.game, pl = D.player, pp = D.play;
   const DB = ctx.DB, U = ctx.val.usage;
   const teamsWanted = new Set();
-  for (const id of ids) { const p = ctx.byId.get(id); if (p) teamsWanted.add(p.t); }
+  // a D/ST's week follows the offense it faces, so that offense is simulated too
+  for (const id of ids) { const p = ctx.byId.get(id); if (p) { teamsWanted.add(p.t); if (p.p === "DST" && (DB.opp || {})[p.t]) teamsWanted.add(DB.opp[p.t]); } }
   if (opts.allTeams) for (const t of Object.keys(DB.teams || {})) teamsWanted.add(t);
   const opp = DB.opp || {};
   // team blocks
@@ -1496,6 +1567,9 @@ function simWeek(ctx, ids, opts = {}) {
     B.cvc = Float64Array.from(ps, (x) => (x.pos === "RB" ? pp.cv_catch_rb : x.pos === "WR" ? pp.cv_catch_wr : pp.cv_catch_te));
     B.out = ps.map(() => new Float32Array(n));
     B.g = new Float64Array(k); B.f = new Float64Array(k); B.lc = new Float64Array(k); B.lt = new Float64Array(k); B.la = new Float64Array(k);
+    // the offense's touchdowns and yards in each simulated game: its kicker's PATs and the other side's D/ST follow them
+    B.tdS = new Float32Array(n); B.ydS = new Float32Array(n);
+    B.tdE = ps.reduce((a, x) => a + x.car * x.rtd + (x.qb ? 0 : x.tgt * x.cr * x.ctd), 0) + (ea > 0 ? B.Ot : 0);
     blocks.push(B);
   }
   // games: pair teams that play each other (pace and script are shared); side +1 for the alphabetically first
@@ -1571,6 +1645,7 @@ function simWeek(ctx, ids, opts = {}) {
           rtdc = R.poisson(rec * x.ctd * vt * etd);
         }
         recY[i] = ryd; recT[i] = rtdc; Sy += ryd; St += rtdc;
+        B.tdS[s] += rtd + rtdc; B.ydS[s] += ry + ryd;
         const ops = nC[i] + nT[i] + nA[i];
         const fl = R.poisson(ops * x.fl), two = R.poisson(ops * x.two);
         // QB passing is added below, once the receivers are done
@@ -1578,6 +1653,7 @@ function simWeek(ctx, ids, opts = {}) {
       }
       if (B.ea > 0) {
         const oy = gsum((B.Oy / pp.other_ypt) * vp, pp.other_ypt * ve, pp.other_cv), ot = R.poisson(B.Ot * vp * vt);
+        B.tdS[s] += ot; B.ydS[s] += oy;
         const tpy = B.Ey + B.Oy > 0 ? ((Sy + oy) / (B.Ey + B.Oy)) * B.Qy : 0;
         const tpt = B.Et + B.Ot > 0 ? ((St + ot) / (B.Et + B.Ot)) * B.Qt : 0;
         for (let i = 0; i < B.k; i++) {
@@ -1592,7 +1668,101 @@ function simWeek(ctx, ids, opts = {}) {
   }
   const pts = new Map(), inp = new Map();
   for (const B of blocks) B.ps.forEach((x, i) => { pts.set(x.id, B.out[i]); inp.set(x.id, x); });
+  simKd(ctx, ids, opts, n, R, blocks, pts, inp);
   return { n, pts, inp, teams: blocks.map((B) => B.team) };
+}
+
+/*
+ * Kickers and defenses in the same simulated games, from their expected stat lines this week, with the spreads and
+ * links measured in box scores (DIST.kdst, dist/fit_dist.py fit_kdst). A kicker's PATs follow his offense's
+ * simulated touchdowns (they correlate 0.87); his field-goal tries are steadier than a Poisson count, a little
+ * fewer when there are more PATs (-0.21), and are made at his rate for each distance. A D/ST's points allowed come from the spread of real scores around the line, tied
+ * to the opposing offense's simulated touchdowns when that offense is in the simulation; yards allowed move with
+ * points allowed; sacks, interceptions and fumble recoveries rise on a good defensive day (each with its own
+ * game shock), and some takeaways go for touchdowns. Scored with the league's settings; each player's simulated
+ * mean is moved onto the page's projection (expert blends included).
+ */
+function simKd(ctx, ids, opts, n, R, blocks, pts, inp) {
+  const DB = ctx.DB, cur = +ctx.S.curWeek, sc = ctx.S.scoring, KS = (DB.kdst && DB.kdst.sim) || null;
+  if (!KS) return;
+  const want = new Set();
+  for (const id of ids) { const p = ctx.byId.get(id); if (p && p.kw) want.add(p); }
+  if (opts.allTeams) for (const p of DB.players) if (p.kw) want.add(p);
+  const blockOf = new Map(blocks.map((B) => [B.team, B]));
+  const zc = new Map();
+  const zTd = (B) => {     // an offense's simulated touchdowns, standardized, per game
+    if (!B || !(B.tdE > 0.05)) return null;
+    if (zc.has(B.team)) return zc.get(B.team);
+    let m = 0, v = 0;
+    for (let s = 0; s < n; s++) m += B.tdS[s];
+    m /= n;
+    for (let s = 0; s < n; s++) v += (B.tdS[s] - m) ** 2;
+    const sd = Math.sqrt(v / n) || 1, z = Float64Array.from(B.tdS, (x) => (x - m) / sd);
+    zc.set(B.team, z);
+    return z;
+  };
+  const res = KS.paResid, cdf = [];
+  let acc = 0, mu = 0;
+  for (const [r, p] of res) { acc += p; cdf.push(acc); mu += r * p; }
+  const qPA = (u) => { let i = 0; while (i < cdf.length - 1 && cdf[i] < u * acc) i++; return res[i][0]; };
+  const qPois = (lam, u) => { let k = 0, p = Math.exp(-lam), F = p; while (u > F && k < 60) { k++; p *= lam / k; F += p; } return k; };
+  const qBin = (nn, pp, u) => { let k = 0, p = Math.pow(1 - pp, nn), F = p; while (u > F && k < nn) { p *= ((nn - k) / (k + 1)) * (pp / (1 - pp)); k++; F += p; } return k; };
+  const K = DIST.kdst || {}, EV = K.ev || {}, rp = K.pa_rho ?? 0.9, ryp = K.ya_pa ?? 0.68, rk = K.pat_rho ?? 0.87, vm = K.fga_vm ?? 1, rpf = K.pat_fga ?? 0;
+  const g = (k) => +kdSet(sc, k) || 0, pt = kdSet(sc, "paTier") || [], yt = kdSet(sc, "yaTier") || [];
+  const Phi = (x) => 0.5 * (1 + erf(x / Math.SQRT2));
+  const mix = (z, e, r) => r * z + Math.sqrt(Math.max(0, 1 - r * r)) * e;
+  for (const p of want) {
+    const v = p.kw[cur], val = ctx.val.get(p.id);
+    if (!v || !val || !val.avail[0]) continue;
+    const proj = ctx.wkA.get(p.id)[0], shift = proj - scoreComp(v, sc, p.p);
+    const pplay = p.p === "K" ? pPlay(ctx, p).p : 1;
+    const out = new Float32Array(n);
+    if (p.p === "K") {
+      const zt = zTd(blockOf.get(p.t)), pat = v[0] + v[1], pPat = pat > 0 ? v[0] / pat : 0;
+      const a = [v[2] + v[6], v[3] + v[7], v[4] + v[5] + v[8]], fga = a[0] + a[1] + a[2];
+      const mk = [a[0] > 0 ? v[2] / a[0] : 0, a[1] > 0 ? v[3] / a[1] : 0, a[2] > 0 ? (v[4] + v[5]) / a[2] : 0];
+      const six = v[4] + v[5] > 0 ? v[5] / (v[4] + v[5]) : 0;
+      const nT = vm < 0.98 && fga > 0 ? Math.max(1, Math.round(fga / (1 - vm))) : 0, pT = nT ? Math.min(1, fga / nT) : 0;
+      for (let s = 0; s < n; s++) {
+        if (R.u() >= pplay) continue;
+        // drives end in a touchdown or a field goal: more PATs, slightly fewer field-goal tries
+        const wp = zt ? mix(zt[s], R.normal(), rk) : R.normal(), uf = Phi(mix(wp, R.normal(), rpf));
+        const pa = qPois(pat, Phi(wp)), pm = R.binom(pa, pPat);
+        const tries = nT ? qBin(nT, pT, uf) : qPois(fga, uf);
+        const m = [0, 0, 0], x = [0, 0, 0];
+        for (let t = 0; t < tries; t++) {
+          const u = R.u() * fga, b = u < a[0] ? 0 : u < a[0] + a[1] ? 1 : 2;
+          if (R.u() < mk[b]) m[b]++; else x[b]++;
+        }
+        const m6 = R.binom(m[2], six);
+        out[s] = kScore([pm, pa - pm, m[0], m[1], m[2] - m6, m6, x[0], x[1], x[2]], sc) + shift;
+      }
+    } else {
+      const zt = zTd(blockOf.get((DB.opp || {})[p.t]));
+      const c = v[7] - mu, sdY = KS.yaSd || 75, take = v[1] + v[2], pTd = take > 0 ? Math.min(1, v[4] / take) : 0;
+      const ev = ["sk", "it", "fr"].map((k, i) => [v[i], ...(EV[k] || [0, 0])]);
+      for (let s = 0; s < n; s++) {
+        const w = zt ? mix(zt[s], R.normal(), rp) : R.normal();
+        const pa = Math.max(0, Math.round(c + qPA(Phi(w))));
+        const ya = v[8] + sdY * mix(w, R.normal(), ryp);
+        const cnt = ev.map(([lam, sig, cc]) => R.poisson(lam * Math.exp(sig * mix(-w, R.normal(), cc) - 0.5 * sig * sig)));
+        const td = take > 0 && v[4] > 0 && (cnt[1] + cnt[2]) > 0 ? R.binom(cnt[1] + cnt[2], pTd) : R.poisson(take > 0 ? 0 : v[4]);
+        let ti = 0; while (ti < 8 && pa >= [1, 7, 14, 18, 22, 28, 35, 46][ti]) ti++;
+        let yi = 0; while (yi < 8 && ya >= [100, 200, 300, 350, 400, 450, 500, 550][yi]) yi++;
+        out[s] = cnt[0] * g("sack") + cnt[1] * g("dInt") + cnt[2] * g("fumRec") + R.poisson(v[3]) * g("safety") + td * g("dTd")
+          + R.poisson(v[5]) * g("stTd") + R.poisson(v[6]) * g("blk") + pa * g("ptsAllowed") + ya * g("ydsAllowed")
+          + (+pt[ti] || 0) + (+yt[yi] || 0) + shift;
+      }
+    }
+    pts.set(p.id, out);
+    inp.set(p.id, { id: p.id, pos: p.p, qb: false, kd: true, pplay, proj, car: 0, tgt: 0, att: 0 });
+  }
+}
+/* Error function (Abramowitz-Stegun 7.1.26, |error| < 1.5e-7). */
+function erf(x) {
+  const t = 1 / (1 + 0.3275911 * Math.abs(x));
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  return x >= 0 ? y : -y;
 }
 
 /* Percentiles and chances from one player's simulated points. */
@@ -1607,10 +1777,23 @@ function distSummary(arr, proj) {
 }
 
 /* Lineup slots as a list, narrowest first, each with the positions it takes. */
-const SLOT_POS = { QB: ["QB"], RB: ["RB"], WR: ["WR"], TE: ["TE"], RBWR: ["RB", "WR"], WRTE: ["WR", "TE"], FLEX: ["RB", "WR", "TE"], OP: ["QB", "RB", "WR", "TE"] };
-function lineupSlotList(S) {
+const SLOT_POS = { QB: ["QB"], RB: ["RB"], WR: ["WR"], TE: ["TE"], K: ["K"], DST: ["DST"], RBWR: ["RB", "WR"], WRTE: ["WR", "TE"], FLEX: ["RB", "WR", "TE"], OP: ["QB", "RB", "WR", "TE"] };
+const SLOT_ORDER = ["QB", "RB", "WR", "TE", "K", "DST", "RBWR", "WRTE", "FLEX", "OP"];
+/* Slots of a kind in the league (leagues imported before kickers and defenses were modeled kept them as slotsK/slotsDST). */
+function slotCount(S, k) {
+  const v = S.slots && S.slots[k];
+  if (v != null && v !== "") return +v || 0;
+  if (k === "K" && S.slotsK != null) return +S.slotsK || 0;
+  if (k === "DST" && S.slotsDST != null) return +S.slotsDST || 0;
+  return 0;
+}
+/* have: positions the data has players for (start/sit leaves out K or D/ST slots the data can't fill). */
+function lineupSlotList(S, have) {
   const out = [];
-  for (const k of ["QB", "RB", "WR", "TE", "RBWR", "WRTE", "FLEX", "OP"]) for (let i = 0; i < (+S.slots[k] || 0); i++) out.push({ k, pos: SLOT_POS[k] });
+  for (const k of SLOT_ORDER) {
+    if (have && SLOT_POS[k].every((p) => !have.has(p))) continue;
+    for (let i = 0; i < slotCount(S, k); i++) out.push({ k, pos: SLOT_POS[k] });
+  }
   return out;
 }
 /* Put players in slots (bipartite matching). Returns slot index per player, or null if they don't fit. */
@@ -1645,11 +1828,11 @@ function bestByValue(slots, cands) {
 
 /*
  * Start/sit for one matchup. mine/theirs: teams. Ranks lineups by the chance to win the week, not just by
- * projected points: P(win) = share of simulated weeks where your starters outscore theirs (kickers and team
- * defenses aren't modeled; their usual swings are added to both sides as noise).
+ * projected points: P(win) = share of simulated weeks where your starters outscore theirs, kickers and defenses
+ * included (with data built before they were modeled, their usual swings are added to both sides as noise).
  */
 function startSit(ctx, mine, theirs, opts = {}) {
-  const S = ctx.S, slots = lineupSlotList(S);
+  const S = ctx.S, have = new Set(ctx.DB.players.map((p) => p.p)), slots = lineupSlotList(S, have);
   const ids = mine.roster.concat(theirs ? theirs.roster : []).filter((id) => ctx.byId.has(id));
   const sim = opts.sim || simWeek(ctx, ids, { n: opts.n || 4000, seed: opts.seed });
   const n = sim.n;
@@ -1663,9 +1846,9 @@ function startSit(ctx, mine, theirs, opts = {}) {
   const oppL = theirs ? bestByValue(slots, pool(theirs).map((x) => ({ ...x, v: x.proj * x.pplay }))) : [];
   const oppTot = new Float64Array(n);
   for (const x of oppL) for (let s = 0; s < n; s++) oppTot[s] += x.arr[s];
-  // kickers and defenses: unmodeled, the same on average for both sides
+  // kickers and defenses the data doesn't have (built before they were modeled): their usual swing, both sides
   const K = DIST.kdst || { k_sd: 4.5, dst_sd: 6 };
-  const nk = S.slotsK == null ? 1 : +S.slotsK || 0, nd = S.slotsDST == null ? 1 : +S.slotsDST || 0;
+  const nk = have.has("K") ? 0 : slotCount(S, "K"), nd = have.has("DST") ? 0 : slotCount(S, "DST");
   const kd = opts.kdst === false ? 0 : Math.sqrt(2 * (K.k_sd ** 2 * nk + K.dst_sd ** 2 * nd));
   const R = makeRng(7919), noise = new Float64Array(n);
   for (let s = 0; s < n; s++) noise[s] = kd * R.normal() + (opts.lead || 0);
@@ -1749,10 +1932,16 @@ function needCalc(ctx, cands, opts = {}) {
 }
 
 /* ---------------- ESPN import ---------------- */
-const ESPN_SLOTS = { 0: "QB", 2: "RB", 3: "RBWR", 4: "WR", 5: "WRTE", 6: "TE", 7: "OP", 23: "FLEX" };
+const ESPN_SLOTS = { 0: "QB", 2: "RB", 3: "RBWR", 4: "WR", 5: "WRTE", 6: "TE", 7: "OP", 23: "FLEX", 17: "K", 16: "DST" };
 const ESPN_POS = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "D/ST" };
 const ESPN_SLOT_POS = { 0: "QB", 2: "RB", 4: "WR", 6: "TE" };
 const ESPN_STATS = { 3: "passYd", 4: "passTd", 20: "int", 24: "rushYd", 25: "rushTd", 53: "rec", 42: "recYd", 43: "recTd", 72: "fumble", 19: "twoPt", 26: "twoPt", 44: "twoPt" };
+// kickers and team defenses (ESPN stat ids; 74 is "FG made 50+" in old leagues and 50-59 once 201 is set)
+const ESPN_KD_STATS = { 86: "patMade", 88: "patMiss", 80: "fg0", 77: "fg40", 74: "fg50", 201: "fg60", 85: "fgMiss", 82: "fgMiss0", 79: "fgMiss40", 76: "fgMiss50",
+  99: "sack", 95: "dInt", 96: "fumRec", 98: "safety", 94: "dTd", 101: "stTd", 97: "blk", 120: "ptsAllowed", 127: "ydsAllowed" };
+const ESPN_PA_TIERS = [89, 90, 91, 92, 121, 122, 123, 124, 125];
+const ESPN_YA_TIERS = [128, 129, 130, 131, 132, 133, 134, 135, 136];
+const ESPN_KD_KNOWN = new Set([...Object.keys(ESPN_KD_STATS).map(Number), ...ESPN_PA_TIERS, ...ESPN_YA_TIERS, 83, 93, 102, 103, 104, 105, 203]);
 
 /* Pull a league ID (and season / team, when present) out of an ID or any ESPN link. */
 function parseLeagueInput(text) {
@@ -1797,6 +1986,25 @@ function espnProjection(stats, season, week) {
   return sPer != null ? sPer : wPer;
 }
 
+/* Kicker and D/ST scoring from ESPN's scoring items. Rules the league doesn't list score 0. */
+function parseKdScoring(items) {
+  const out = {}, by = new Map();
+  for (const it of items || []) if (it && it.statId != null) by.set(+it.statId, +it.points || 0);
+  for (const [id, k] of Object.entries(ESPN_KD_STATS)) out[k] = by.has(+id) ? by.get(+id) : 0;
+  // FG made 50+ (74) covers 60+ in leagues without a 60+ rule; "total FG made" (83) adds to every distance
+  if (!by.has(201)) out.fg60 = out.fg50;
+  if (by.has(83)) for (const k of ["fg0", "fg40", "fg50", "fg60"]) out[k] += by.get(83);
+  if (by.has(203) && !by.has(76)) out.fgMiss50 = by.get(203);
+  // defensive TDs: one rule for all, or interception (103) / fumble (104) return TDs; return TDs: kickoff (101),
+  // punt (102) or blocked kick (93) returns; "total return TD" (105) counts for both
+  if (!by.has(94)) out.dTd = by.has(103) ? by.get(103) : by.has(104) ? by.get(104) : 0;
+  if (!by.has(101)) out.stTd = by.has(102) ? by.get(102) : by.has(93) ? by.get(93) : 0;
+  if (by.has(105)) { out.dTd += by.get(105); out.stTd += by.get(105); }
+  out.paTier = ESPN_PA_TIERS.map((id) => (by.has(id) ? by.get(id) : 0));
+  out.yaTier = ESPN_YA_TIERS.map((id) => (by.has(id) ? by.get(id) : 0));
+  return out;
+}
+
 /*
  * Turn ESPN's league JSON (views mSettings, mTeam, mRoster) into league fields.
  * prev: the existing league with this ESPN id, if any (keeps your edits and your team).
@@ -1822,7 +2030,7 @@ function parseEspn(raw, DB, opts) {
   const items = (set.scoringSettings && set.scoringSettings.scoringItems) || [];
   for (const it of items) {
     const key = ESPN_STATS[it.statId];
-    if (!key) { if (it.points) report.ignoredScoring++; continue; }
+    if (!key) { if (it.points && !ESPN_KD_KNOWN.has(+it.statId)) report.ignoredScoring++; continue; }
     if (key === "twoPt" && found.twoPt) continue;
     scoring[key] = +it.points || 0;
     found[key] = true;
@@ -1833,13 +2041,13 @@ function parseEspn(raw, DB, opts) {
   }
   for (const k of SCORE_KEYS) if (!found[k]) scoring[k] = 0;
   for (const k of ["passYd", "rushYd", "recYd"]) if (!found[k]) { scoring[k] = DEFAULT_SETTINGS.scoring[k]; report.warnings.push(`No ${k === "passYd" ? "passing" : k === "rushYd" ? "rushing" : "receiving"}-yards rule found; using ${DEFAULT_SETTINGS.scoring[k]} per yard. Check the League tab.`); }
+  Object.assign(scoring, parseKdScoring(items));
 
   // lineup
-  const slots = { QB: 0, RB: 0, WR: 0, TE: 0, RBWR: 0, WRTE: 0, FLEX: 0, OP: 0 };
+  const slots = { QB: 0, RB: 0, WR: 0, TE: 0, RBWR: 0, WRTE: 0, FLEX: 0, OP: 0, K: 0, DST: 0 };
   const counts = (set.rosterSettings && set.rosterSettings.lineupSlotCounts) || {};
   for (const [sid, n] of Object.entries(counts)) if (ESPN_SLOTS[sid]) slots[ESPN_SLOTS[sid]] += +n || 0;
-  // kickers (17) and team defenses (16) aren't modeled, but start/sit adds their usual swing to both sides
-  const slotsK = +counts[17] || 0, slotsDST = +counts[16] || 0;
+  const hasPos = new Set(DB.players.map((p) => p.p));
 
   // schedule
   const sch = set.scheduleSettings || {};
@@ -1865,7 +2073,8 @@ function parseEspn(raw, DB, opts) {
       const pos = ESPN_POS[pl.defaultPositionId];
       const p = byEspn.get(pid);
       if (!p) {
-        if (pos === "K" || pos === "D/ST") report.kdst++;
+        // data built before kickers and defenses were modeled has none of them
+        if ((pos === "K" && !hasPos.has("K")) || (pos === "D/ST" && !hasPos.has("DST"))) report.kdst++;
         else report.unmatched.push(pl.fullName || "ESPN player " + pid);
         continue;
       }
@@ -1912,7 +2121,7 @@ function parseEspn(raw, DB, opts) {
     leagueId: String(j.id || opts.leagueId || ""),
     season,
     name: set.name || "ESPN league " + (j.id || ""),
-    settings: { teams: +set.size || teams.length, scoring, slots, slotsK, slotsDST, curWeek: week, lastWeek, playoffStart: regWeeks + 1,
+    settings: { teams: +set.size || teams.length, scoring, slots, curWeek: week, lastWeek, playoffStart: regWeeks + 1,
       faab: !!acq.isUsingAcquisitionBudget, faabBudget: +acq.acquisitionBudget || 100 },
     teams,
     autoOut,
@@ -1930,6 +2139,7 @@ function applyEspn(prev, imp, DB, mineEspnTeamId) {
   L.name = imp.name;
   L.example = false;
   L.settings = { ...L.settings, ...imp.settings, scoring: imp.settings.scoring, slots: imp.settings.slots };
+  delete L.settings.slotsK; delete L.settings.slotsDST;   // now slots.K / slots.DST
   const mineId = mineEspnTeamId != null ? +mineEspnTeamId : (prev && (prev.teams.find((t) => t.mine) || {}).espnTeamId);
   // keep what the user set for each manager (style; a record typed in when ESPN sent none)
   const prevBy = new Map(((prev && prev.teams) || []).map((t) => [t.espnTeamId, t]));
@@ -1949,4 +2159,4 @@ function applyEspn(prev, imp, DB, mineEspnTeamId) {
   return L;
 }
 
-if (typeof module !== "undefined" && module.exports) module.exports = { PARAMS, DIST, makeRng, pPlay, weekStatus, distInputs, simWeek, distSummary, lineupSlotList, fitSlots, bestByValue, startSit, needCalc, shareOpp, faabPerDollar, faabValue, faabOf, depthFor, teamDepth, streamLevels, overWaiver, roleNotes, usageModel, sharePts, effOut, weekOfDate, defaultOut, DEFAULT_SETTINGS, newLeague, buildCtx, valuations, teamValue, evalTrade, findTrades, contextValues, lineupForWeek, sampleLeague, scoreComp, vorpQ, marketPrice, marketPrices, perspective, fanOf, teamMood, styleOf, styleWeights, perceive, outWeek, parseLeagueInput, espnApiUrl, extractJson, parseEspn, applyEspn, SIGNALS };
+if (typeof module !== "undefined" && module.exports) module.exports = { POSITIONS, OFF_POS, KD_POS, POS_LABEL, K_KEYS, D_KEYS, PA_TIERS, YA_TIERS, kScore, dScore, kdModel, parseKdScoring, slotCount, lineupFast, POS_CODE, PARAMS, DIST, makeRng, pPlay, weekStatus, distInputs, simWeek, distSummary, lineupSlotList, fitSlots, bestByValue, startSit, needCalc, shareOpp, faabPerDollar, faabValue, faabOf, depthFor, teamDepth, streamLevels, overWaiver, roleNotes, usageModel, sharePts, effOut, weekOfDate, defaultOut, DEFAULT_SETTINGS, newLeague, buildCtx, valuations, teamValue, evalTrade, findTrades, contextValues, lineupForWeek, sampleLeague, scoreComp, vorpQ, marketPrice, marketPrices, perspective, fanOf, teamMood, styleOf, styleWeights, perceive, outWeek, parseLeagueInput, espnApiUrl, extractJson, parseEspn, applyEspn, SIGNALS };

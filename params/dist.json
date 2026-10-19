@@ -265,8 +265,33 @@
   }
  },
  "kdst": {
-  "k_sd": 4.73,
-  "dst_sd": 6.0,
-  "note": "kicker fitted on box scores; team defense typical value"
+  "k_sd": 4.55,
+  "dst_sd": 6.38,
+  "pat_rho": 0.866,
+  "pat_fga": -0.214,
+  "fga_vm": 0.845,
+  "pa_rho": 0.913,
+  "ya_pa": 0.684,
+  "ev": {
+   "sk": [
+    0.343,
+    0.737
+   ],
+   "it": [
+    0.237,
+    1.0
+   ],
+   "fr": [
+    0.196,
+    1.0
+   ]
+  },
+  "seasons": [
+   2022,
+   2023,
+   2024,
+   2025
+  ],
+  "note": "fitted on box scores (dist/fit_dist.py fit_kdst); see its docstring"
  }
 }

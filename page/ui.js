@@ -21,7 +21,9 @@ const ui = {
   confirm: "",
 };
 
-const LABEL = (p) => `${p.n} · ${p.p} ${p.t}`;
+const POSL = (pos) => POS_LABEL[pos] || pos;
+function chipOf(pos, style) { return `<span class="chip ${pos}"${style ? ` style="${style}"` : ""}>${POSL(pos)}</span>`; }
+const LABEL = (p) => `${p.n} · ${POSL(p.p)} ${p.t}`;
 const byLabel = new Map(DB.players.map((p) => [LABEL(p).toLowerCase(), p]));
 $("#playerList").innerHTML = DB.players.map((p) => `<option value="${esc(LABEL(p))}"></option>`).join("");
 $("#dataStamp").textContent = `Stats through Week ${DB.doneWeek ?? DB.curWeek - 1} · data updated ${DB.builtAt ? new Date(DB.builtAt).toLocaleDateString([], { month: "short", day: "numeric" }) : ""}`;
@@ -150,7 +152,12 @@ function accept(data) {
   L.settings = { ...DEFAULT_SETTINGS, ...ds };
   L.settings.scoring = { ...DEFAULT_SETTINGS.scoring, ...(ds.scoring || {}) };
   L.settings.scoring.byPos = clone((ds.scoring && ds.scoring.byPos) || {});
+  for (const k of ["paTier", "yaTier"]) L.settings.scoring[k] = clone((ds.scoring && ds.scoring[k]) || DEFAULT_SETTINGS.scoring[k]);
   L.settings.slots = { ...DEFAULT_SETTINGS.slots, ...(ds.slots || {}) };
+  // leagues imported before kickers and defenses were modeled kept their slots as slotsK / slotsDST
+  if (ds.slots && ds.slots.K == null && ds.slotsK != null) L.settings.slots.K = +ds.slotsK || 0;
+  if (ds.slots && ds.slots.DST == null && ds.slotsDST != null) L.settings.slots.DST = +ds.slotsDST || 0;
+  delete L.settings.slotsK; delete L.settings.slotsDST;
   L.settings.perc = { ...DEFAULT_SETTINGS.perc, ...(ds.perc || {}) };
   // leagues saved before the Week 4 backtest still carry the old 50% expert default
   if (!(+data.v >= 3) && +ds.expertWeight === 0.5) L.settings.expertWeight = DEFAULT_SETTINGS.expertWeight;
@@ -267,7 +274,7 @@ async function initStore() {
 const BROWSER = "host:claude_browser";
 let mcpNS = null, browserState = "checking";
 const fmtNum = (x) => String(+(+x || 0).toFixed(2));
-const SLOT_LABEL = { QB: "QB", RB: "RB", WR: "WR", TE: "TE", RBWR: "RB/WR", WRTE: "WR/TE", FLEX: "FLEX", OP: "superflex" };
+const SLOT_LABEL = { QB: "QB", RB: "RB", WR: "WR", TE: "TE", K: "K", DST: "D/ST", RBWR: "RB/WR", WRTE: "WR/TE", FLEX: "FLEX", OP: "superflex" };
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
 async function initBrowser() {
@@ -454,7 +461,7 @@ function renderTrade() {
       const p = pl(id);
       return `<label class="pick ${set.has(id) ? "on" : ""}">
         <input type="checkbox" id="pick-${which}-${id}" data-act="pick" data-side="${which}" data-id="${id}" ${set.has(id) ? "checked" : ""}>
-        <span class="chip ${p.p}">${p.p}</span>
+        ${chipOf(p.p)}
         <span style="min-width:0"><span class="pname">${esc(p.n)}</span> ${injTag(p)}<br><span class="sub">${p.t} · bye ${byeOf(p)}</span></span>
         <span class="num" title="Projected / market points per game">${ctx.val.get(id).plays ? fmt(ctx.ppg.a.get(id)) : "out"} <span class="muted">/ ${fmt(ctx.ppg.q.get(id))}</span></span>
       </label>`;
@@ -489,7 +496,7 @@ function verdictHTML(A, B, give, get, money) {
     const w = Math.min(50, Math.abs(v) / span * 50);
     return `<div class="dbar"><i style="${v >= 0 ? `left:50%;width:${w}%;background:var(--good)` : `left:${50 - w}%;width:${w}%;background:var(--bad)`}"></i></div>`;
   };
-  const fa = (id, who) => id ? `<li>${who} fills the open roster spot with free agent <b>${esc(pl(id).n)}</b> (${pl(id).p}).</li>` : "";
+  const fa = (id, who) => id ? `<li>${who} fills the open roster spot with free agent <b>${esc(pl(id).n)}</b> (${POSL(pl(id).p)}).</li>` : "";
   const wk = state.settings.curWeek;
   const lineupDiff = (team, newRoster, you) => {
     const td = teamDepth(ctx, team);
@@ -532,9 +539,9 @@ function tradeValueNote(give, get) {
   const ids = give.concat(get);
   if (!ids.length) return "";
   const tv = (id) => `${esc(pl(id).n)} ${fmt(Math.max(0, marketPrice(ctx, id)))}`;
-  const qt = ids.some((id) => pl(id).p === "QB" || pl(id).p === "TE");
+  const qt = ids.some((id) => ["QB", "TE"].includes(pl(id).p)), kdx = ids.some((id) => KD_POS.includes(pl(id).p));
   const sf = ctx.mkt && ctx.mkt.b > 0.5;
-  return `<li>Trade value per week, as managers see it: ${ids.map(tv).join(" · ")}.${qt ? sf ? " Your league starts two quarterbacks, so QBs are priced at their full points." : " QBs and TEs are priced the way the consensus overall rankings price them: in a one-QB league only the top few are worth much more than a streamer." : ""}</li>`;
+  return `<li>Trade value per week, as managers see it: ${ids.map(tv).join(" · ")}.${qt ? sf ? " Your league starts two quarterbacks, so QBs are priced at their full points." : " QBs and TEs are priced the way the consensus overall rankings price them: in a one-QB league only the top few are worth much more than a streamer." : ""}${kdx ? " Kickers and defenses are priced the same way: the overall rankings list only a handful of them, far down, so most are worth next to nothing in a trade even when they help a lineup." : ""}</li>`;
 }
 
 /* What the FAAB in a trade is worth to each side. */
@@ -561,7 +568,7 @@ function renderFinder() {
     <tbody>${F.results.map((r, i) => {
       const t = teamById(r.partner);
       if (!t) return "";
-      const list = (ids, dollars) => ids.map((id) => pl(id) ? `<div class="row" style="gap:6px;flex-wrap:nowrap"><span class="chip ${pl(id).p}">${pl(id).p}</span><span class="pname">${esc(pl(id).n)}</span>${injTag(pl(id))}</div>` : "").join("")
+      const list = (ids, dollars) => ids.map((id) => pl(id) ? `<div class="row" style="gap:6px;flex-wrap:nowrap">${chipOf(pl(id).p)}<span class="pname">${esc(pl(id).n)}</span>${injTag(pl(id))}</div>` : "").join("")
         + (dollars ? `<div class="row" style="gap:6px"><span class="chip faab">$</span><span class="pname">$${dollars} FAAB</span><span class="tag q">sweetener</span></div>` : "");
       const them = perWeek(r.dB);
       const ask = r.askFor ? `<div class="sub" style="white-space:normal;margin-top:4px" title="They'd still be ${pct(r.askFor.accept)} likely to accept, and your gain becomes ${sgn(perWeek(r.askFor.dA))} pts/wk">Room to ask for $${r.askFor.amount} FAAB too (${pct(r.askFor.accept)})</div>` : "";
@@ -665,7 +672,7 @@ function managerHTML(t, needs) {
     <div class="mgr-facts">
       <div class="notice">${edgeTxt}</div>
       ${fanFact(t)}
-      ${short.length || deep.length ? `<div>${short.length ? `<b>Needs</b> ${short.map((pos) => `<span class="chip ${pos}">${pos}</span>`).join(" ")}` : ""}${short.length && deep.length ? " · " : ""}${deep.length ? `<b>Deep at</b> ${deep.map((pos) => `<span class="chip ${pos}">${pos}</span>`).join(" ")}` : ""} <span class="sub">starters vs league average this week</span></div>` : ""}
+      ${short.length || deep.length ? `<div>${short.length ? `<b>Needs</b> ${short.map((pos) => `${chipOf(pos)}`).join(" ")}` : ""}${short.length && deep.length ? " · " : ""}${deep.length ? `<b>Deep at</b> ${deep.map((pos) => `${chipOf(pos)}`).join(" ")}` : ""} <span class="sub">starters vs league average this week</span></div>` : ""}
       ${over.length ? `<div><b>Would overrate</b> of yours: ${over.map(nm).join(", ")} <span class="sub">pts/g above our projection: sell to him</span></div>` : ""}
       ${under.length ? `<div><b>Underrates</b> on his roster: ${under.map(nm).join(", ")} <span class="sub">buy from him</span></div>` : ""}
     </div>
@@ -683,7 +690,7 @@ function renderTeams() {
       const p = pl(id);
       if (!p) return `<tr><td colspan="6" class="muted">Unknown player (${esc(id)})</td><td><button class="x" data-act="rm" data-team="${t.id}" data-id="${esc(id)}" aria-label="Remove">×</button></td></tr>`;
       return `<tr>
-        <td>${starters.has(id) ? '<i class="starter-dot" title="Starts this week"></i>' : '<i class="bench-dot" title="Bench this week"></i>'}<span class="chip ${p.p}">${p.p}</span></td>
+        <td>${starters.has(id) ? '<i class="starter-dot" title="Starts this week"></i>' : '<i class="bench-dot" title="Bench this week"></i>'}${chipOf(p.p)}</td>
         <td style="min-width:0"><span class="pname">${esc(p.n)}</span> ${injTag(p)}<br><span class="sub">${p.t} · bye ${byeOf(p)}</span></td>
         <td class="n">${fmt(ctx.ppg.a.get(id))}</td><td class="n muted">${fmt(ctx.ppg.q.get(id))}</td>
         <td><input type="number" id="out-${id}" min="0" max="${state.settings.lastWeek}" placeholder="${autoOutOf(p) ?? "–"}" value="${state.out[id] ?? ""}" data-act="out" data-id="${id}" title="${autoOutOf(p) != null ? esc(`Out through week ${autoOutOf(p)}: ${(injInfo(p) || {}).why || "injury report"}. Type a week to change it.`) : "Last week he'll miss. Leave blank if healthy."}" aria-label="Out through week"></td>
@@ -725,6 +732,33 @@ function oppNow(p) {
   const car = d[0] > 0 ? (T.r * p.m[0]) / d[0] : 0, tgt = d[1] > 0 ? (T.t * p.m[1]) / d[1] : 0, att = d[2] > 0 ? (T.p * p.m[2]) / d[2] : 0;
   return p.p === "QB" ? { att, car: att * p.m[11], tgt: 0, w } : { car, tgt, att: 0, w };
 }
+/* A kicker's or defense's expected stat line this week, from the builder (DB.kdst), in words and a small table. */
+function kdWeekHTML(p) {
+  const w = +state.settings.curWeek, v = p.kw && p.kw[w];
+  if (!v) return "";
+  const sc = state.settings.scoring, T = (DB.teams || {})[p.t], opp = (DB.opp || {})[p.t];
+  const imp = (t) => { const e = (DB.teams || {})[t] && DB.teams[t].env && DB.teams[t].env[w]; return e ? e[2] : null; };
+  const row = (l, x, pts) => `<tr><td>${l}</td><td class="n">${x}</td><td class="n muted">${pts == null ? "" : sgn(pts, 2)}</td></tr>`;
+  if (p.p === "K") {
+    const pat = v[0] + v[1], fga = v[2] + v[3] + v[4] + v[5] + v[6] + v[7] + v[8], made = v[2] + v[3] + v[4] + v[5];
+    const pts = (i, k) => v[i] * (+kdSet(sc, k) || 0);
+    const missPts = (v[6] + v[7] + v[8]) * (+kdSet(sc, "fgMiss") || 0) + v[6] * (+kdSet(sc, "fgMiss0") || 0) + v[7] * (+kdSet(sc, "fgMiss40") || 0) + v[8] * (+kdSet(sc, "fgMiss50") || 0);
+    return `<div class="stack" style="gap:6px"><div class="label">Week ${w}${opp ? ` vs ${esc(opp)}` : ""}: what he's expected to kick</div>
+      <table class="mini"><tbody>${row("PATs made", `${fmt(v[0], 2)} of ${fmt(pat, 2)}`, pts(0, "patMade") + pts(1, "patMiss"))}
+      ${row("Field goals made 0–39", fmt(v[2], 2), pts(2, "fg0"))}${row("40–49", fmt(v[3], 2), pts(3, "fg40"))}${row("50+", fmt(v[4] + v[5], 2), pts(4, "fg50") + pts(5, "fg60"))}
+      ${row("Field goals missed", fmt(v[6] + v[7] + v[8], 2), missPts)}</tbody></table>
+      <p class="notice" style="margin:0">${esc(p.t)} ${imp(p.t) != null ? `is implied for ${fmt(imp(p.t))} points` : "has no line yet"}: more points mean more PATs, while field-goal tries barely move with the total (favorites kick a few more). ${fmt(fga, 1)} tries expected, ${pct(fga > 0 ? made / fga : 0)} made at his distances (his own makes and mix, pulled toward the league's).</p></div>`;
+  }
+  const g = (k) => +kdSet(sc, k) || 0, pt = kdSet(sc, "paTier") || [], yt = kdSet(sc, "yaTier") || [];
+  const paPts = PA_TIERS.reduce((a, _, i) => a + v[9 + i] * (+pt[i] || 0), 0) + v[7] * g("ptsAllowed");
+  const yaPts = YA_TIERS.reduce((a, _, i) => a + v[18 + i] * (+yt[i] || 0), 0) + v[8] * g("ydsAllowed");
+  const tiers = PA_TIERS.map((l, i) => ({ l, p: v[9 + i] })).filter((x) => x.p >= 0.05).map((x) => `${x.l}: ${pct(x.p)}`).join(" · ");
+  return `<div class="stack" style="gap:6px"><div class="label">Week ${w}${opp ? ` vs ${esc(opp)}` : ""}: what the defense is expected to do</div>
+    <table class="mini"><tbody>${row("Sacks", fmt(v[0], 2), v[0] * g("sack"))}${row("Interceptions", fmt(v[1], 2), v[1] * g("dInt"))}${row("Fumble recoveries", fmt(v[2], 2), v[2] * g("fumRec"))}
+    ${row("Defensive and return TDs", fmt(v[4] + v[5], 2), v[4] * g("dTd") + v[5] * g("stTd"))}${row("Safeties, blocked kicks", fmt(v[3] + v[6], 2), v[3] * g("safety") + v[6] * g("blk"))}
+    ${row("Points allowed", fmt(v[7], 1), paPts)}${row("Yards allowed", fmt(v[8], 0), yaPts)}</tbody></table>
+    <p class="notice" style="margin:0">${opp ? `${esc(opp)} ${imp(opp) != null ? `is implied for ${fmt(imp(opp))} points` : "has no line yet"}.` : ""} Points allowed this week: ${tiers}. A weak offense gives up more sacks and turnovers; so does one whose team trails (the defense's team favored). Each defense's and offense's own rates count too, pulled toward the league's.</p></div>`;
+}
 function wkNow(p) {
   const v = ctx.val.get(p.id);
   if (!v || !v.avail.length || !v.avail[0]) return null;
@@ -752,10 +786,10 @@ function renderPlayers() {
     const x = extOf(p.id), adp = adpOf(p), rost = rostOf(p);
     const wn = wkNow(p), vv = ctx.val.get(p.id), playsRos = vv.plays, ow = overWaiver(ctx, p.id);
     return `<tr class="clickable ${P.sel === p.id ? "sel" : ""}" data-act="psel" data-id="${p.id}">
-      <td><span class="chip ${p.p}">${p.p}</span></td><td><span class="pname">${esc(p.n)}</span> ${injTag(p)}${o ? ' <span class="tag q" title="You set a custom number">edited</span>' : ""}${vv && vv.roleChanged ? ` <span class="tag role" title="Teammate injuries change his workload">${vv.roleShift > 0 ? "role ↑" : "role ↓"}</span>` : ""}<div class="sub">${p.t} · bye ${byeOf(p)}</div></td>
+      <td>${chipOf(p.p)}</td><td><span class="pname">${esc(p.n)}</span> ${injTag(p)}${o ? ' <span class="tag q" title="You set a custom number">edited</span>' : ""}${vv && vv.roleChanged ? ` <span class="tag role" title="Teammate injuries change his workload">${vv.roleShift > 0 ? "role ↑" : "role ↓"}</span>` : ""}<div class="sub">${p.t} · bye ${byeOf(p)}</div></td>
       <td class="n">${wn == null ? `<span class="muted">${(DB.byes[p.t] || []).includes(+state.settings.curWeek) ? "bye" : "out"}</span>` : fmt(wn)}</td>
       <td class="n">${playsRos ? fmt(a) : '<span class="muted">out</span>'}</td>
-      <td class="n ${ow == null ? "muted" : ow >= 1 ? "" : "muted"}" title="Points per game over the streamer you could pick up at ${p.p}">${playsRos && ow != null ? sgn(ow) : "–"}</td>
+      <td class="n ${ow == null ? "muted" : ow >= 1 ? "" : "muted"}" title="Points per game over the streamer you could pick up at ${POSL(p.p)}">${playsRos && ow != null ? sgn(ow) : "–"}</td>
       <td class="n muted">${fmt(qv)}</td>
       <td class="n ${!playsRos ? "muted" : gap > 0.5 ? "good" : gap < -0.5 ? "bad" : "muted"}">${playsRos ? sgn(gap) : "–"}</td>
       <td class="n" title="${p.er ? `Expert std dev ${p.es ?? "–"} spots` : "Not in the expert rankings"}">${p.er ? p.p + p.er : "–"}</td>
@@ -764,12 +798,12 @@ function renderPlayers() {
       <td class="sub owner-cell" title="${owner.has(p.id) ? esc(owner.get(p.id).name) : "Free agent"}">${owner.has(p.id) ? esc(owner.get(p.id).name) : "Free agent"}</td></tr>`;
   }).join("");
   el.innerHTML = `${exampleBanner()}<h2>Players</h2>
-    <p class="lede"><b>Wk ${state.settings.curWeek}</b> is this week's projection and <b>Proj</b> the rest-of-season average: a usage model that shifts work when teammates are hurt and adjusts for each game's Vegas line, blended with the expert consensus. <b>Mkt</b> is what a typical manager sees: season stats, form, position rank, the last two seasons, draft cost, roster and start rates${state.espn ? ", and ESPN's projection" : ""}. <b>Over FA</b> is how much better he is than the free agent you could stream at his position each week: most quarterbacks and tight ends are close to zero. A positive <b>Gap</b> means the market undervalues him. Click a player for the breakdown and his value to each team.</p>
+    <p class="lede"><b>Wk ${state.settings.curWeek}</b> is this week's projection and <b>Proj</b> the rest-of-season average: a usage model that shifts work when teammates are hurt and adjusts for each game's Vegas line, blended with the expert consensus (kickers and defenses: from the line, their own rates and their opponents'). <b>Mkt</b> is what a typical manager sees: season stats, form, position rank, the last two seasons, draft cost, roster and start rates${state.espn ? ", and ESPN's projection" : ""}. <b>Over FA</b> is how much better he is than the free agent you could stream at his position each week: most quarterbacks and tight ends are close to zero. A positive <b>Gap</b> means the market undervalues him. Click a player for the breakdown and his value to each team.</p>
     <div class="grid players-grid">
       <div class="box stack" style="min-width:0">
         <div class="row">
           <input type="search" id="pSearch" placeholder="Search name or NFL team" value="${esc(P.q)}" data-act="psearch" style="flex:1;min-width:10em">
-          <select id="pPos" data-act="ppos"><option value="">All positions</option>${["QB", "RB", "WR", "TE"].map((x) => `<option ${P.pos === x ? "selected" : ""}>${x}</option>`).join("")}</select>
+          <select id="pPos" data-act="ppos"><option value="">All positions</option>${POSITIONS.map((x) => `<option value="${x}" ${P.pos === x ? "selected" : ""}>${POSL(x)}</option>`).join("")}</select>
           <select id="pOwn" data-act="pown"><option value="all" ${P.own === "all" ? "selected" : ""}>Everyone</option><option value="fa" ${P.own === "fa" ? "selected" : ""}>Free agents</option><option value="ros" ${P.own === "ros" ? "selected" : ""}>Rostered</option></select>
         </div>
         <div class="tablewrap"><table><thead><tr><th></th>${th("n", "Player")}${th("wk", "Wk " + state.settings.curWeek, 1, "Our projection for this week, with teammates' injuries")}${th("a", "Proj", 1, "Our projection, points per game for the rest of the season (weeks he plays)")}${th("ow", "Over FA", 1, "Points per game over the free agent you could stream at his position. This is what he's really worth to a lineup.")}${th("q", "Mkt", 1, "Market view, points per game")}${th("gap", "Gap", 1, "Proj minus Mkt")}${th("er", "Experts", 1, "FantasyPros rest-of-season consensus position rank")}${th("adp", "ADP", 1, espnAdp ? "ESPN average draft position (pick number); # = preseason consensus rank where ESPN has none" : "Preseason consensus draft rank (FantasyPros), used where ESPN ADP isn't imported")}${th("rost", "Rost", 1, state.espn ? "ESPN percent rostered" : "Percent rostered, average across ESPN and Yahoo")}<th>Owner</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -783,14 +817,14 @@ function sigNote(k, s, p) {
   const hot = s.raw0 != null && Math.abs(s.raw0 - s.v) >= 0.1 ? ` · ${fmt(s.raw0)} before regressing a small sample` : "";
   if (k === "season") return `${p.g26} game${p.g26 === 1 ? "" : "s"}${hot}`;
   if (k === "form") return hot.replace(/^ · /, "");
-  if (k === "experts") return `FantasyPros ${p.p}${s.rank}`;
+  if (k === "experts") return `FantasyPros ${POSL(p.p)}${s.rank}`;
   if (k === "track") {
     const yr = (y, g) => y != null && g > 0 ? `${fmt(y)} in ${g} g` : "";
     return [s.y25 != null && s.g25 ? "2025 " + yr(s.y25, s.g25) : "", s.y24 != null && s.g24 ? "2024 " + yr(s.y24, s.g24) : ""].filter(Boolean).join(" · ")
-      + ` · ${p.p}${s.rank}${s.full >= 0.95 ? " · steadies his market view" : ""}`;
+      + ` · ${POSL(p.p)}${s.rank}${s.full >= 0.95 ? " · steadies his market view" : ""}`;
   }
-  if (k === "prk") return `${p.p}${s.rank}${s.src === "ESPN" ? " on ESPN" : ""}${hot}`;
-  if (k === "adp") return s.src === "ESPN" ? `pick ${fmt(s.raw)} on ESPN · ${p.p}${s.rank}` : `preseason #${s.raw} · ${p.p}${s.rank}`;
+  if (k === "prk") return `${POSL(p.p)}${s.rank}${s.src === "ESPN" ? " on ESPN" : ""}${hot}`;
+  if (k === "adp") return s.src === "ESPN" ? `pick ${fmt(s.raw)} on ESPN · ${POSL(p.p)}${s.rank}` : `preseason #${s.raw} · ${POSL(p.p)}${s.rank}`;
   if (k === "rost" || k === "start") return `${fmt(s.raw, 1)}%${s.ties > 3 ? ` · tied with ${s.ties - 1} others` : ""}`;
   if (k === "news") return `role ${s.shift > 0 ? "+" : "−"}${fmt(Math.abs(s.shift))} pts/g with teammates out`;
   return "";
@@ -801,17 +835,17 @@ function tradeValueHTML(p) {
   const m = ctx.mkt;
   if (!m) return "";
   const id = p.id, x = m.parts.get(id), mu = m.mu.get(id), plays = ctx.val.get(id).plays;
-  const qt = p.p === "QB" || p.p === "TE";
+  const qt = ["QB", "TE", "K", "DST"].includes(p.p);
   const sf = p.p === "QB" && m.b > 0.5;
   const own = state.overrides[id] && state.overrides[id].q != null && state.overrides[id].q !== "";
   const c = own ? 0 : m.c;
   const rank = x.listed ? `#${Math.round(x.eo)} overall` : `about #${Math.round(x.eo)} overall, estimated from his position rank`;
-  const sigTxt = x.sig <= 0 ? `he's ${fmt(-x.sig)} market pts below a replacement ${p.p}` : qt ? `${fmt(x.sig)}, the price of his rank at ${p.p}` : `${fmt(x.sig)} market pts over a replacement ${p.p}`;
+  const sigTxt = x.sig <= 0 ? `he's ${fmt(-x.sig)} market pts below a replacement ${POSL(p.p)}` : qt ? `${fmt(x.sig)}, the price of his rank at ${POSL(p.p)}` : `${fmt(x.sig)} market pts over a replacement ${POSL(p.p)}`;
   const how = sf ? `Your league starts two quarterbacks, so QBs are priced at their full market points.`
     : `${pct(1 - c)} from the market signals (${sigTxt})${c > 0 ? ` and ${pct(c)} from the consensus overall rankings (${rank}: ${fmt(x.con)})` : own ? ", because you set his market view" : ""}.`;
   const prem = x.prem > 0.005 ? ` Proven-player premium: +${fmt(x.prem)}, for ${x.proven >= 0.95 ? "two good seasons" : "a good track record"} backing his value.` : "";
   return `<div class="row" style="margin-top:4px"><span class="label">Trade value</span><span class="spacer"></span><span class="num">${plays ? fmt(Math.max(0, mu)) + " pts/wk" : "none while out"}</span></div>
-    <p class="notice" style="margin:0">What managers think he's worth in a trade, per week he plays, over a replacement ${p.p}. ${how}${prem}</p>`;
+    <p class="notice" style="margin:0">What managers think he's worth in a trade, per week he plays, over a replacement ${POSL(p.p)}. ${how}${prem}</p>`;
 }
 
 function weeklyHTML(p, v) {
@@ -823,7 +857,7 @@ function weeklyHTML(p, v) {
   const cells = weeks.map((w, i) => {
     const bye = byes.includes(w), on = v.avail[i];
     const h = on ? Math.max(3, Math.round((wk[i] / mx) * 56)) : 0;
-    const ev = v.env && v.env[i];
+    const ev = !KD_POS.includes(p.p) && v.env && v.env[i];
     const tip = bye ? `Week ${w}: bye` : on ? `Week ${w}: ${fmt(wk[i])} pts${ev ? ` · offense ${ev.x >= 0 ? "+" : "−"}${Math.round(Math.abs(ev.x) * 100)}% vs usual${i > 0 ? " (projected)" : ""}` : ""}` : `Week ${w}: out`;
     const playoff = w >= +state.settings.playoffStart;
     return `<div class="wk-cell ${playoff ? "po" : ""}" title="${tip}" aria-label="${tip}">
@@ -848,20 +882,21 @@ function playerDetail() {
     const mx = Math.max(0.5, ...cv.map((x) => Math.abs(x.d)));
     ctxRows = cv.map((x) => `<div class="ctx-row"><span class="${x.has ? "pname" : ""}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.team.name)}${x.has ? " (owns)" : ""}</span><div><div class="bar ${x.has ? "own" : ""}" style="width:${Math.max(0, x.d) / mx * 100}%"></div></div><span class="num" style="text-align:right">${sgn(x.d, 2)}</span></div>`).join("");
   }
-  const op = oppNow(p);
+  const op = oppNow(p), kd = KD_POS.includes(p.p);
   const usage = op ? (p.p === "QB" ? `this week ~${fmt(op.att, 0)} pass attempts, ${fmt(op.car, 1)} carries` : `this week ~${fmt(op.car, 1)} carries, ${fmt(op.tgt, 1)} targets`) : "";
   const x = extOf(id);
   const ii = injInfo(p);
   const status = "";
   const staleExp = Math.abs(v.model - v.modelEcr) >= 0.5;
-  const projRows = `<tr><td>Usage model <span class="sub">rest of season</span></td><td class="n">${fmt(v.model)}</td><td class="n muted"></td></tr>
-    <tr><td>Expert consensus <span class="sub">${v.ranked ? `${p.p}${p.er}${p.es != null ? (p.es < 0.05 ? ", unanimous" : `, std dev ${fmt(p.es)} spots`) : ""}` : `unranked (below ${p.p}${(DB.rosN || {})[p.p] || ""})`} = ${fmt(v.expert)} pts/g</span></td><td class="n">${sgn(v.corr)}</td><td class="n muted">${pct(v.w)}</td></tr>`;
+  const projRows = `<tr><td>${kd ? "Line-based model" : "Usage model"} <span class="sub">rest of season</span></td><td class="n">${fmt(v.model)}</td><td class="n muted"></td></tr>
+    <tr><td>Expert consensus <span class="sub">${v.ranked ? `${POSL(p.p)}${p.er}${p.es != null ? (p.es < 0.05 ? ", unanimous" : `, std dev ${fmt(p.es)} spots`) : ""}` : `unranked (below ${POSL(p.p)}${(DB.rosN || {})[p.p] || ""})`} = ${fmt(v.expert)} pts/g</span></td><td class="n">${sgn(v.corr)}</td><td class="n muted">${pct(v.w)}</td></tr>`;
   const thisWeek = (() => {
     const e = v.env && v.env[0], out = [];
     if (!v.avail[0]) return "";
+    if (kd) return kdWeekHTML(p) + (v.wkExp != null ? `<p class="notice" style="margin:0">FantasyPros weekly rank ${POSL(p.p)}${v.wkRank} (${fmt(v.wkExp)} pts) gets ${pct(state.settings.weeklyExpert ?? 0.25)} of this week's number.</p>` : "");
     if (e) out.push(`Week ${state.settings.curWeek} game: ${esc(p.t)} ${e.imp ? `implied for ${fmt(e.imp)} points, ` : ""}${e.x >= 0 ? "+" : "−"}${Math.round(Math.abs(e.x) * 100)}% vs their usual${Math.abs(e.s) >= 1 ? `, ${e.s > 0 ? "favored" : "underdog"} by ${fmt(Math.abs(e.s))}` : ""}.`);
     if (v.back && v.back[0] < 1) out.push(`First game back after missing time, so his share counts at ${pct(v.back[0])}.`);
-    if (v.wkExp != null) out.push(`FantasyPros weekly rank ${p.p}${v.wkRank} (${fmt(v.wkExp)} pts) gets ${pct(state.settings.weeklyExpert ?? 0.25)} of this week's number.`);
+    if (v.wkExp != null) out.push(`FantasyPros weekly rank ${POSL(p.p)}${v.wkRank} (${fmt(v.wkExp)} pts) gets ${pct(state.settings.weeklyExpert ?? 0.25)} of this week's number.`);
     return out.length ? `<p class="notice" style="margin:0">${out.join(" ")}</p>` : "";
   })();
   const roles = roleNotes(ctx, id);
@@ -873,13 +908,13 @@ function playerDetail() {
     if (!s) return `<tr class="muted"><td>${SIG_LABEL[k]}</td><td class="n">–</td><td class="n">–</td></tr>`;
     return `<tr><td>${SIG_LABEL[k]} <span class="sub">${esc(sigNote(k, s, p))}</span></td><td class="n">${fmt(s.v)}</td><td class="n muted">${s.wt && den ? pct(s.wt / den) : "0%"}</td></tr>`;
   }).join("");
-  return `<div class="row"><span class="chip ${p.p}">${p.p}</span><h3>${esc(p.n)}</h3>${injTag(p)}</div>
+  return `<div class="row">${chipOf(p.p)}<h3>${esc(p.n)}</h3>${injTag(p)}</div>
     <div class="sub" style="white-space:normal">${p.t} · bye ${byeOf(p)} · ${p.g26} games in 2026${usage ? " · " + esc(usage) : ""}</div>
     ${ii ? `<div class="callout ${ii.cls === "ir" ? "inj-callout" : ""}" style="padding:8px 12px"><b>${esc(ii.label)}</b>${ii.why ? ` <span class="notice">· ${esc(ii.why)}</span>` : ""}</div>` : ""}
     <div class="stack" style="gap:6px">
       <div class="row"><span class="label">Our projection</span><span class="spacer"></span><span class="num">${fmt(ctx.ppg.a.get(id))} pts/g${o.a != null ? " (yours)" : ""}</span></div>
       ${(() => { const ow = overWaiver(ctx, id); if (ow == null || state.settings.waiver === false) return ""; const who = (ctx.waiverWho[p.p] || []).slice(0, 3).map((x) => pl(x).n).join(", ");
-        return `<div class="callout" style="padding:8px 12px"><b>${sgn(ow)} pts/g over a streamer.</b> <span class="notice">The ${["", "best", "second-best", "third-best", "fourth-best"][Math.min(4, +state.settings.waiverDepth || 2)]} free agent ${p.p} projects ${fmt(ctx.waiverAvg.a[p.p])} pts/g${who ? ` (now: ${esc(who)})` : ""}. That is the most a lineup loses without him.</span></div>`; })()}
+        return `<div class="callout" style="padding:8px 12px"><b>${sgn(ow)} pts/g over a streamer.</b> <span class="notice">The ${["", "best", "second-best", "third-best", "fourth-best"][Math.min(4, +state.settings.waiverDepth || 2)]} free agent ${POSL(p.p)} projects ${fmt(ctx.waiverAvg.a[p.p])} pts/g${who ? ` (now: ${esc(who)})` : ""}. That is the most a lineup loses without him.</span></div>`; })()}
       <table class="mini"><tbody>${projRows}</tbody></table>
       ${thisWeek}
       <p class="notice" style="margin:0">The expert line moves the model toward the consensus by ${pct(v.w)} of the gap${staleExp ? ", measured against the injuries the experts knew about when they ranked (" + esc(fmtDate((DB.sources || {}).ros)) + "), so later news isn't undone by stale ranks" : ""}.${v.why ? " Expert share lowered: " + esc(v.why) + "." : ""}</p>
@@ -890,7 +925,7 @@ function playerDetail() {
       <div class="row"><span class="label">Market view</span><span class="spacer"></span><span class="num">${fmt(ctx.ppg.q.get(id))} pts/g${o.q != null ? " (yours)" : ""}</span></div>
       ${ctx.faAdj && ctx.faAdj.get(id) ? `<p class="notice" style="margin:0">Free agent in your league: every manager passed on him, so the market judges him by his projection on the market's scale (${fmt(ctx.faAdj.get(id).qm)}) rather than his signals below (${fmt(ctx.faAdj.get(id).q0)}).</p>` : ""}
       <table class="mini"><tbody>${mktRows}</tbody></table>
-      <p class="notice" style="margin:0">Ranks are turned into points using this season's points by rank at ${p.p}, blended with the model's until more games are played. Shares come from the weights on the League tab.</p>
+      <p class="notice" style="margin:0">Ranks are turned into points using this season's points by rank at ${POSL(p.p)}, blended with the model's until more games are played. Shares come from the weights on the League tab.</p>
       ${tradeValueHTML(p)}
     </div>
     <div><div class="label" style="margin-bottom:6px">Points per week he adds, by team</div><div class="stack" style="gap:6px">${ctxRows}</div>
@@ -915,7 +950,10 @@ function renderLeague() {
   const presetKey = Object.keys(PRESETS).find((k) => noByPos && sc.rec === PRESETS[k].rec && sc.passYd === 0.04 && sc.passTd === 4 && sc.int === -2 && sc.rushYd === 0.1 && sc.rushTd === 6 && sc.recYd === 0.1 && sc.recTd === 6 && sc.fumble === -2 && sc.twoPt === 2) || "custom";
   const num = (id, path, v, attrs = "") => `<input type="number" id="${id}" value="${v}" data-act="set" data-path="${path}" ${attrs}>`;
   const scoreFields = [["passYd", "Per passing yard"], ["passTd", "Passing TD"], ["int", "Interception"], ["rushYd", "Per rushing yard"], ["rushTd", "Rushing TD"], ["rec", "Reception"], ["recYd", "Per receiving yard"], ["recTd", "Receiving TD"], ["fumble", "Fumble lost"], ["twoPt", "2-pt conversion"]];
-  const slotFields = [["QB", "QB"], ["RB", "RB"], ["WR", "WR"], ["TE", "TE"], ["RBWR", "RB/WR flex"], ["WRTE", "WR/TE flex"], ["FLEX", "FLEX (RB/WR/TE)"], ["OP", "Superflex (OP)"]];
+  const slotFields = [["QB", "QB"], ["RB", "RB"], ["WR", "WR"], ["TE", "TE"], ["RBWR", "RB/WR flex"], ["WRTE", "WR/TE flex"], ["FLEX", "FLEX (RB/WR/TE)"], ["OP", "Superflex (OP)"], ["K", "K"], ["DST", "D/ST"]];
+  const kFields = [["patMade", "PAT made"], ["patMiss", "PAT missed"], ["fg0", "FG 0–39"], ["fg40", "FG 40–49"], ["fg50", "FG 50–59"], ["fg60", "FG 60+"], ["fgMiss", "FG missed"], ["fgMiss0", "Extra: missed 0–39"], ["fgMiss40", "Extra: missed 40–49"], ["fgMiss50", "Extra: missed 50+"]];
+  const dFields = [["sack", "Sack"], ["dInt", "Interception"], ["fumRec", "Fumble recovered"], ["safety", "Safety"], ["dTd", "INT or fumble return TD"], ["stTd", "Kick or punt return TD"], ["blk", "Blocked kick"], ["ptsAllowed", "Per point allowed"], ["ydsAllowed", "Per yard allowed"]];
+  const tierFields = (key, labels, unit) => labels.map((l, i) => `<label class="field"><span class="label">${l} ${unit}</span><input type="number" id="sc-${key}-${i}" step="0.5" value="${(kdSet(sc, key) || [])[i] ?? 0}" data-act="tier" data-key="${key}" data-i="${i}"></label>`).join("");
   const teRec = sc.byPos && sc.byPos.TE && sc.byPos.TE.rec != null ? sc.byPos.TE.rec : "";
   const P = S.perc;
   const pSum = SIGNALS.reduce((a, k) => a + (+P[k] || 0), 0) || 1;
@@ -924,7 +962,7 @@ function renderLeague() {
   const confirming = ui.confirm === "delLeague";
   const el = $("#panel-league");
   el.innerHTML = `${exampleBanner()}<h2>League</h2>
-    <p class="lede">Bring your league in from ESPN, then fine-tune how players are valued. Kickers and team defenses aren't modeled, since they rarely decide a trade.</p>
+    <p class="lede">Bring your league in from ESPN, then fine-tune how players are valued. An import brings your scoring for kickers and defenses too; without one they use ESPN's standard rules.</p>
     <div class="stack" style="margin-bottom:14px">${importBoxHTML()}</div>
     <div class="grid cols-2" style="align-items:start">
       <div class="box stack">
@@ -943,7 +981,7 @@ function renderLeague() {
         <label class="field"><span class="label">Who you'd get each week</span>
           <select id="set-wdepth" data-act="set" data-path="waiverDepth">${[1, 2, 3, 4].map((k) => `<option value="${k}" ${+S.waiverDepth === k ? "selected" : ""}>${["", "The best free agent", "The second-best (default)", "The third-best", "The fourth-best"][k]}</option>`).join("")}</select>
           <span class="hint">Every lineup can start a free agent at any position, so a player is only worth what he adds over that streamer. Pick deeper if your league is active on waivers.</span></label>
-        <table class="mini"><tbody>${POSITIONS.map((pos) => `<tr><td><span class="chip ${pos}">${pos}</span></td><td class="n">${fmt(ctx.waiverAvg.a[pos])} pts/g</td><td class="sub" style="white-space:normal">${esc((ctx.waiverWho[pos] || []).slice(0, 3).map((x) => pl(x).n).join(", "))}</td></tr>`).join("")}</tbody></table>
+        <table class="mini"><tbody>${POSITIONS.map((pos) => `<tr><td>${chipOf(pos)}</td><td class="n">${fmt(ctx.waiverAvg.a[pos])} pts/g</td><td class="sub" style="white-space:normal">${esc((ctx.waiverWho[pos] || []).slice(0, 3).map((x) => pl(x).n).join(", "))}</td></tr>`).join("")}</tbody></table>
         <p class="notice" style="margin:0">Streaming level by position, rest of season (top free agents this week). ${!(state.teams.length >= +S.teams && state.teams.reduce((a, x) => a + x.roster.length, 0) >= +S.teams * 12) ? "Your rosters look incomplete, so players rostered in at least half of leagues are treated as taken." : "Free agents are players on no roster in this league."}</p>
       </div>
       <div class="box stack">
@@ -977,6 +1015,17 @@ function renderLeague() {
           <select id="preset" data-act="preset">${Object.entries(PRESETS).map(([k, v]) => `<option value="${k}" ${presetKey === k ? "selected" : ""}>${v.label}</option>`).join("")}<option value="custom" ${presetKey === "custom" ? "selected" : ""}>Custom</option></select></div>
         <div class="fields" style="grid-template-columns:repeat(auto-fill,minmax(130px,1fr))">${scoreFields.map(([k, l]) => `<label class="field"><span class="label">${l}</span>${num("sc-" + k, "scoring." + k, sc[k], 'step="0.01"')}</label>`).join("")}
           <label class="field"><span class="label">Reception (TE)</span><input type="number" id="sc-teRec" step="0.05" value="${teRec}" placeholder="${sc.rec}" data-act="teRec"><span class="hint">Blank = same as everyone</span></label></div>
+        <details><summary class="label" style="cursor:pointer">Kickers and defenses (D/ST)</summary>
+          <div class="stack" style="margin-top:8px">
+            <div class="fields" style="grid-template-columns:repeat(auto-fill,minmax(130px,1fr))">${kFields.map(([k, l]) => `<label class="field"><span class="label">${l}</span>${num("sc-" + k, "scoring." + k, kdSet(sc, k), 'step="0.5"')}</label>`).join("")}</div>
+            <p class="notice" style="margin:0">"FG missed" counts every miss; the extras are on top, for leagues that charge more for short misses.</p>
+            <div class="fields" style="grid-template-columns:repeat(auto-fill,minmax(130px,1fr))">${dFields.map(([k, l]) => `<label class="field"><span class="label">${l}</span>${num("sc-" + k, "scoring." + k, kdSet(sc, k), 'step="0.1"')}</label>`).join("")}</div>
+            <div class="label">Points allowed</div>
+            <div class="fields" style="grid-template-columns:repeat(auto-fill,minmax(90px,1fr))">${tierFields("paTier", PA_TIERS, "pts")}</div>
+            <div class="label">Yards allowed</div>
+            <div class="fields" style="grid-template-columns:repeat(auto-fill,minmax(90px,1fr))">${tierFields("yaTier", YA_TIERS, "yds")}</div>
+            <p class="notice" style="margin:0">Points allowed leave out the other team's defensive touchdowns (a pick-six isn't on your defense) but count return touchdowns against your special teams, as ESPN does.</p>
+          </div></details>
       </div>
       <div class="box stack">
         <h3>How managers judge trades</h3>
@@ -1008,6 +1057,8 @@ function fmtDate(d) {
 }
 
 /* ---------------- METHOD ---------------- */
+// kicker and D/ST backtest, 2024-26 (backtest/kdst_backtest.py --baselines): average miss, standard scoring
+const KD_BT = { dst: 4.62, dstAvg: 5.10, k: 3.76, kAvg: 3.90 };
 function renderMethod() {
   const src = DB.sources || {};
   $("#panel-method").innerHTML = `<div class="prose"><h2>How the numbers work</h2>
@@ -1028,6 +1079,13 @@ points = carries, targets, attempts × his efficiency per opportunity, scored wi
   <p>"As of the experts' date" means the model run with only the injuries the experts knew about. A backup whose starter got hurt after the rankings was ranked as a backup; measuring the gap that way keeps the stale rank from cancelling the news. <code>e</code> is the expert weight on the League tab (20% to start, the best weight in the backtest below). It shrinks when experts disagree about a player more than usual for his rank, falls to half for players they don't rank, and goes to zero for players out two or more weeks.</p>
   <p><b>Weekly rankings.</b> For the current week only, FantasyPros' weekly rankings (which fold in matchups and late news) are read off the same points-by-rank curve and get 25% of that week's number. They're skipped for players with an injury tag, whose rank prices in the chance they sit.</p>
   <p><b>How well it predicts.</b> The formula was replayed on every week of 2024–2026: each week projected from only the data before it, with each team's work split among the players who actually played. The changes above were tuned on 2024 and checked on 2025–26 (4,400 player-games): the average miss fell from 5.28 to 5.10 PPR points per player and the correlation with actual scores rose from 0.56 to 0.58, with every position improving. On Week 4 of 2026, as the page would have shown it on Oct 2, the average miss fell from 5.75 to 5.64 and the rank correlation rose from 0.47 to 0.51. FantasyPros' weekly rankings missed by 5.87 that week. Opponent defense against a position added nothing once the Vegas line was known, so it isn't used. A single week is mostly noise: the season-long numbers matter more.</p>
+  <h3>1b. Kickers and defenses (K, D/ST)</h3>
+  <p>They don't share a team's carries and targets, so they get their own model, built from the same Vegas lines:</p>
+  <ul>
+    <li><b>Kickers.</b> PAT tries rise with the team's implied total (about 0.15 per point); field-goal tries barely move with it (about 2 a game; favorites kick a few more). A team whose coach kicks more than the line says keeps part of that habit. Tries are split by distance (0–39, 40–49, 50–59, 60+) using his own mix, pulled toward the league's, and made at his own rate at each distance, pulled toward the league's rate there (attempts count three seasons back, older ones less). Then your league's kicking rules score the expected makes and misses.</li>
+    <li><b>Defenses.</b> Sacks, interceptions and fumble recoveries come from the league's rates for the opponent's implied total (a weak offense gives up more) and the spread (an opponent that trails throws more), times the defense's own rate and the opposing offense's (both pulled toward average). Return touchdowns and blocked kicks use the league rate with a small team lean; defensive touchdowns follow takeaways. Points allowed start from the opponent's implied total with the spread of real games around it, so each points-allowed tier gets a probability (a 3% shutout chance pays your 0-points bonus about 3% of the time). Yards allowed come from the same line plus each side's yardage habits.</li>
+  </ul>
+  <p>Replaying 2024–26 week by week with only the data before each week, defenses missed by ${esc(fmt(KD_BT.dst, 2))} points per game against ${esc(fmt(KD_BT.dstAvg, 2))} for each defense's season average; kickers by ${esc(fmt(KD_BT.k, 2))} against ${esc(fmt(KD_BT.kAvg, 2))}. Kicking is mostly luck from week to week; the line and the kicker's leg are all there is to go on. The improvement loop tunes these settings every week like the rest of the model, and the scorecard grades them against FantasyPros.</p>
   <h3>2. What the market sees (Mkt)</h3>
   <p>A manager sizing up a player looks at a handful of numbers. Each is converted to points per game and averaged with the weights on the League tab:</p>
   <ul>
@@ -1045,7 +1103,7 @@ points = carries, targets, attempts × his efficiency per opportunity, scored wi
   <h3>3. A player's value depends on the team</h3>
   <div class="formula">V(team) = Σ over weeks  weight(w) · E[best lineup in week w]
 value of player P to team T = V(T with P) − V(T without P)</div>
-  <p>Byes and "Out thru" weeks remove players from specific weeks. The lineup fills QB/RB/WR/TE first, then RB/WR and WR/TE flex, then FLEX, then superflex. With injury insurance on, each starter has a 7% chance to miss any week, so a good backup is worth something.</p>
+  <p>Byes and "Out thru" weeks remove players from specific weeks. The lineup fills QB/RB/WR/TE (and K and D/ST, which only ever fill their own slots) first, then RB/WR and WR/TE flex, then FLEX, then superflex. With injury insurance on, each starter has a 7% chance to miss any week, so a good backup is worth something.</p>
   <p><b>The waiver wire.</b> Every lineup can also start a free agent at each position, every week. The streaming level is the second-best free agent at the position that week (players on no roster in your league who are healthy and not on bye). So losing a quarterback costs only the gap between him and the streamer, not his whole score. Most quarterbacks and tight ends sit only a point or two above what you can pick up; elite ones and the top running backs and receivers stay valuable because their waiver alternatives are weak. The same streaming level sets the replacement floor for trade values, so managers are assumed to know a streamer is available too. Week-specific streamers include backups who start because of injuries, for example a backup quarterback in the weeks his starter is out.</p>
   <h3>FAAB</h3>
   <p>When your league bids on free agents, budgets matter two ways, and both are added to a trade when dollars change hands:</p>
@@ -1097,12 +1155,12 @@ P(accept) = 1 / (1 + e^−((felt − edge) / predictability))</div>
   </ul>
   <p>The spread of each piece was fitted on 2024–26 games replayed with the same projection model, so the simulated weeks look like real ones: actual scores fall below the simulated 10th, 50th and 90th percentiles about 10%, 50% and 90% of the time, and when the simulation says a player has a 30% chance of 15 points, about 30% of them get there. Trained on 2024 only and tested on 2025–26, it beat a role-blind version (past players with the same projection) on every position. The mean is calibrated to what really happened: our projection is tuned to the smallest average miss, which puts it between a player's median and his average, so the simulated average sits a few percent above it, mostly from touchdowns.</p>
   <p><b>Injuries.</b> A player listed Questionable plays with the chance past Questionable regulars with the same final practice played (2023–25 injury reports): about 94% after a full practice, 75% after a limited one, 55% after missing practice, less if he missed his team's last game, and quarterbacks listed Questionable sit far more often. Doubtful players almost never play. When he sits, his work goes to his teammates in that simulated game. Once his team's inactives are out (90 minutes before kickoff) it's settled either way.</p>
-  <p><b>Chance to win.</b> Your starters' simulated points are added up in every simulated week and compared with your opponent's likely lineup; kickers and team defenses aren't modeled, so their usual week-to-week swing is added to both sides. The best lineup is found by swapping starters for bench players while the chance to win goes up. It usually matches the highest-projection lineup; it differs when a starter might not play, or when one player's range suits the matchup better: an underdog needs ceiling, a favorite needs floor.</p>
+  <p><b>Chance to win.</b> Your starters' simulated points are added up in every simulated week and compared with your opponent's likely lineup, kickers and defenses included. A kicker's PATs follow his own offense's simulated touchdowns, and a defense's points and yards allowed follow the offense it faces (in box scores they move with that offense's touchdowns and yards almost one for one), so starting a defense against your own quarterback costs you correlation. Sacks, takeaways, return touchdowns and field goals are counted out at their expected rates. The best lineup is found by swapping starters for bench players while the chance to win goes up. It usually matches the highest-projection lineup; it differs when a starter might not play, or when one player's range suits the matchup better: an underdog needs ceiling, a favorite needs floor.</p>
   <p><b>Floor vs ceiling.</b> The calculator answers one decision: who gives you the best chance of the points you need (or, with the players still to play on both sides, the best chance to win). The chart shows each player's chance of at least x points; where two lines cross is the target at which the steadier player stops being the better bet.</p>
   <p><b>What really sets a player's range.</b> His projection, his position, his game and the chance he sits. His style matters less than it looks: replaying 2024–26, players whose points lean on long plays and touchdowns had about the same week-to-week spread as volume players with the same projection (receivers who catch a high share of their targets were about 4% steadier, deep threats about 4% wilder, and even that didn't hold from one season to the next). At the same projection, running backs actually had a slightly higher floor and ceiling than receivers. So the high-volume back isn't capped: when you need 15, compare the chances, not the labels.</p>
-  <p class="notice">Not modeled yet: kickers and defenses (only as noise), opponent-specific matchups beyond the Vegas line, and live in-game scores (type the deficit yourself). In the backtest, a QB and his top receiver move together a little more in the simulation than in real games (0.45 vs 0.38), and opposing receivers a little less (0.05 vs 0.18).</p>
+  <p class="notice">Not modeled yet: opponent-specific matchups beyond the Vegas line, and live in-game scores (type the deficit yourself). In the backtest, a QB and his top receiver move together a little more in the simulation than in real games (0.45 vs 0.38), and opposing receivers a little less (0.05 vs 0.18).</p>
   <h3>Limits</h3>
-  <p>Projections don't adjust for opponent strength. Kickers and defenses aren't included. A player new to the league since this data was built won't match on import until the data is refreshed. When you know something the data doesn't, type your own number on the Players tab.</p>
+  <p>Projections don't adjust for opponent strength beyond the Vegas line (a defense's and an offense's own sack and turnover rates excepted). A player new to the league since this data was built won't match on import until the data is refreshed. When you know something the data doesn't, type your own number on the Players tab.</p>
   <h3>7. Weekly updates</h3>
   <p>A scheduled task runs every Tuesday morning. It downloads the newest stats, rosters and schedule, the latest FantasyPros consensus and roster rates, reads every team's injury page, checks news on major injuries, rebuilds the player data and republishes this page at the same link. Your saved leagues and edits are untouched. The current week moves forward automatically.</p>
   <p>Two more runs bring the injury news up to kickoff: Thursday evening after the Thursday game's inactives (about 6:45 pm ET), and Sunday morning after the 1 pm inactives (about 11:30 am ET), with the final injury reports, Saturday's activations and every game-day inactive posted so far. The NFL's own Out and Doubtful designations count as missed games even before a team's injury page catches up.</p>
@@ -1173,8 +1231,10 @@ function ssCompute() {
   const res = startSit(ctx, mine, opp, { sim, locked: lk.locked, lockedIn: lk.lockedIn || [] });
   res.lk = lk;
   // spread of each lineup's total, for the score line
-  const tot = (idList) => { const a = new Float64Array(sim.n); for (const id of idList) { const x = sim.pts.get(id); if (x) for (let s = 0; s < sim.n; s++) a[s] += x[s]; } return distSummary(a, 0); };
-  res.myTot = tot(res.best.ids); res.oppTot = tot(res.opp);
+  const totArr = (idList) => { const a = new Float64Array(sim.n); for (const id of idList) { const x = sim.pts.get(id); if (x) for (let s = 0; s < sim.n; s++) a[s] += x[s]; } return a; };
+  const A = totArr(res.best.ids), B = totArr(res.opp);
+  res.myTot = distSummary(A, 0); res.oppTot = distSummary(B, 0);
+  res.margin = distSummary(A.map((x, s) => x - B[s]), 0);
   res.sum = new Map([...sim.pts].map(([id, a]) => [id, distSummary(a, sim.inp.get(id).proj)]));
   res.ms = Math.round(performance.now() - t0);
   S.res = res; S.resFor = { ctx, mine: mine.id, opp: opp ? opp.id : "" };
@@ -1219,7 +1279,7 @@ function matchupHTML() {
     if (!p || !sm) return "";
     const st = started(p);
     return `<tr class="${cls}${st ? " locked" : ""}"><td class="slot-lab">${slot ? esc(SLOT_LABEL[slot] || slot) : "Bench"}</td>
-      <td><span class="chip ${p.p}">${p.p}</span> <span class="pname">${esc(p.n)}</span> ${ssTag(p)}<div class="sub">${p.t} · ${st ? "locked: game started" : esc(kickTxt(p))}</div></td>
+      <td>${chipOf(p.p)} <span class="pname">${esc(p.n)}</span> ${ssTag(p)}<div class="sub">${p.t} · ${st ? "locked: game started" : esc(kickTxt(p))}</div></td>
       <td class="n">${playTxt(x.pplay)}</td><td class="n">${fmt(x.proj)}</td><td class="n">${fmt(sm.p10)}</td><td class="n">${fmt(sm.p50)}</td><td class="n">${fmt(sm.p90)}</td>
       <td style="min-width:110px">${rangeBar(sm, mx, p.p)}</td>
       <td class="n">${alt ? `<span title="${esc(alt.title)}">${alt.txt}</span>` : ""}</td></tr>`;
@@ -1240,7 +1300,8 @@ function matchupHTML() {
   return `<div class="metric-grid" style="margin-bottom:12px">
       <div class="metric"><span class="label">Chance to win, best lineup</span><span class="big">${pct(res.best.p)}</span><div class="meter"><i style="width:${Math.round(res.best.p * 100)}%"></i></div><span class="note">${Math.abs(delta) >= 0.005 ? `${sgn(delta * 100, 0)} points over the highest-projection lineup (${pct(res.proj.p)})` : "the highest-projection lineup is already the best"}</span></div>
       <div class="metric"><span class="label">Projected score</span><span class="big">${fmt(res.myTot.mean, 0)} <span class="muted">–</span> ${fmt(res.oppTot.mean, 0)}</span><span class="note">You ${fmt(res.myTot.p10, 0)}–${fmt(res.myTot.p90, 0)}, ${esc(opp ? opp.name : "them")} ${fmt(res.oppTot.p10, 0)}–${fmt(res.oppTot.p90, 0)} (10th–90th percentile)</span></div>
-      <div class="metric"><span class="label">Not modeled</span><span class="big">±${fmt(res.kd / Math.SQRT2, 0)}</span><span class="note">Kickers and defenses: their usual swing is added to both sides, so a lopsided matchup still isn't a lock.</span></div>
+      ${res.kd > 0 ? `<div class="metric"><span class="label">Not modeled</span><span class="big">±${fmt(res.kd / Math.SQRT2, 0)}</span><span class="note">Kickers and defenses aren't in this data: their usual swing is added to both sides, so a lopsided matchup still isn't a lock.</span></div>`
+        : `<div class="metric"><span class="label">Your margin</span><span class="big">${sgn(res.margin.p50, 0)}</span><span class="note">Middle 80% of simulated weeks: ${sgn(res.margin.p10, 0)} to ${sgn(res.margin.p90, 0)}. Kickers and defenses included: a kicker's PATs follow his offense's touchdowns, a defense's points allowed follow the offense it faces.</span></div>`}
     </div>
     ${reasons.length ? `<div class="callout stack" style="gap:4px;margin-bottom:12px">${reasons.map((r) => `<div>${r}</div>`).join("")}</div>` : ""}
     <div class="tablewrap"><table>
@@ -1300,7 +1361,7 @@ function calcHTML() {
   const S = ui.ss, mine = teamById(S.mine), opp = teamById(S.opp), res = S.res;
   if (!mine) return "";
   const avail = mine.roster.filter((id) => pl(id) && ctx.val.get(id) && ctx.val.get(id).avail[0] && !started(pl(id))).sort((a, b) => ctx.wkA.get(b)[0] - ctx.wkA.get(a)[0]);
-  const chip = (id, on, act, extra = "") => `<button class="pchip ${on ? "on" : ""}" data-act="${act}" data-id="${id}" ${extra} aria-pressed="${on}"><span class="chip ${pl(id).p}" style="min-width:24px">${pl(id).p}</span> ${esc(pl(id).n)}</button>`;
+  const chip = (id, on, act, extra = "") => `<button class="pchip ${on ? "on" : ""}" data-act="${act}" data-id="${id}" ${extra} aria-pressed="${on}">${chipOf(pl(id).p, "min-width:24px")} ${esc(pl(id).n)}</button>`;
   const rows = S.calc || [];
   const best = rows.length ? rows.reduce((a, b) => (b.p > a.p ? b : a)) : null;
   const topProj = rows.length ? rows.reduce((a, b) => ((b.sum ? b.sum.mean : 0) > (a.sum ? a.sum.mean : 0) ? b : a)) : null;
@@ -1318,7 +1379,7 @@ function calcHTML() {
       <div class="row" style="gap:6px">${avail.map((id) => chip(id, S.cands.includes(id), "ssCand")).join("")}</div></div>
     <div class="row" style="align-items:end">
       <label class="field"><span class="label">Points you need</span><input type="number" id="ssNeed" step="0.5" min="-100" max="200" value="${S.need}" data-act="ssNeed" style="width:6em"><span class="hint">How far behind you are (negative if ahead)</span></label>
-      <label class="row" style="gap:6px;padding-bottom:22px"><input type="checkbox" id="ssKd" data-act="ssKd" ${S.kdst ? "checked" : ""}>Kickers and defenses still to play</label>
+      ${DB.players.some((p) => p.p === "K") ? "" : `<label class="row" style="gap:6px;padding-bottom:22px"><input type="checkbox" id="ssKd" data-act="ssKd" ${S.kdst ? "checked" : ""}>Kickers and defenses still to play</label>`}
     </div>
     <details ${S.left.mine.size || S.left.theirs.size ? "open" : ""}><summary class="label" style="cursor:pointer">Other players still to play (optional)</summary>
       <div class="stack" style="margin-top:8px">
@@ -1328,7 +1389,7 @@ function calcHTML() {
       </div></details>
     ${rows.length ? `<div class="ss-viz">
       <div class="tablewrap"><table class="mini"><thead><tr><th>Player</th><th class="n">${others ? "Win" : "Reach"}</th><th class="n">Plays</th><th class="n">Proj</th><th class="n">Floor</th><th class="n">Median</th><th class="n">Ceiling</th></tr></thead>
-        <tbody>${rows.map((r, i) => `<tr><td><span class="ss-key" style="color:${SER[i]}"></span><span class="pname">${esc(pl(r.id).n)}</span> <span class="sub">${pl(r.id).p} ${pl(r.id).t}</span></td><td class="n"><b>${pct(r.p)}</b></td><td class="n">${playTxt(r.pplay)}</td><td class="n">${r.sum ? fmt(ctx.wkA.get(r.id)[0]) : "–"}</td><td class="n">${r.sum ? fmt(r.sum.p10) : "–"}</td><td class="n">${r.sum ? fmt(r.sum.p50) : "–"}</td><td class="n">${r.sum ? fmt(r.sum.p90) : "–"}</td></tr>`).join("")}</tbody></table></div>
+        <tbody>${rows.map((r, i) => `<tr><td><span class="ss-key" style="color:${SER[i]}"></span><span class="pname">${esc(pl(r.id).n)}</span> <span class="sub">${POSL(pl(r.id).p)} ${pl(r.id).t}</span></td><td class="n"><b>${pct(r.p)}</b></td><td class="n">${playTxt(r.pplay)}</td><td class="n">${r.sum ? fmt(ctx.wkA.get(r.id)[0]) : "–"}</td><td class="n">${r.sum ? fmt(r.sum.p10) : "–"}</td><td class="n">${r.sum ? fmt(r.sum.p50) : "–"}</td><td class="n">${r.sum ? fmt(r.sum.p90) : "–"}</td></tr>`).join("")}</tbody></table></div>
       ${insight ? `<p style="margin:10px 0">${insight}</p>` : ""}
       <div style="position:relative">${survivalSVG(rows, S.need)}<div class="ss-tip" id="ssTip"></div></div>
       <p class="notice" style="margin:4px 0 0">Each line is the chance he scores at least that many points this week. Where the lines cross is where the steadier player stops being the better bet: below it, take the higher floor; above it, the higher ceiling.</p>
@@ -1358,11 +1419,11 @@ function boardHTML() {
   const mx = Math.max(10, ...rows.map((r) => r.sum.p90)) * 1.05;
   const th = (k, l, title) => `<th class="n sortable" data-act="ssBsort" data-k="${k}" title="${esc(title)}">${l}${S.bsort === k ? " ↓" : ""}</th>`;
   return `<div class="row" style="margin-bottom:8px">
-      <select id="ssBpos" data-act="ssBpos"><option value="">All positions</option>${POSITIONS.map((x) => `<option ${S.bpos === x ? "selected" : ""}>${x}</option>`).join("")}</select>
+      <select id="ssBpos" data-act="ssBpos"><option value="">All positions</option>${POSITIONS.map((x) => `<option value="${x}" ${S.bpos === x ? "selected" : ""}>${POSL(x)}</option>`).join("")}</select>
       <select id="ssBown" data-act="ssBown"><option value="mine" ${S.bown === "mine" ? "selected" : ""}>My team</option><option value="fa" ${S.bown === "fa" ? "selected" : ""}>Free agents</option><option value="all" ${S.bown === "all" ? "selected" : ""}>Everyone</option></select>
     </div>
     <div class="tablewrap"><table><thead><tr><th>Player</th>${th("p", "Proj", "Our projection if he plays")}${th("play", "Plays", "Chance he plays")}${th("f", "Floor", "10th percentile: a bad week")}<th class="n">Median</th>${th("c", "Ceiling", "90th percentile: a big week")}${th("boom", "Boom", "Chance of 1.5x his projection or more")}<th class="n" title="Chance of less than half his projection">Bust</th><th>Range</th></tr></thead>
-      <tbody>${rows.map((r) => { const p = pl(r.id); return `<tr><td><span class="chip ${p.p}">${p.p}</span> <span class="pname">${esc(p.n)}</span> ${ssTag(p)}<div class="sub">${p.t} · ${started(p) ? "game started" : esc(kickTxt(p))}</div></td>
+      <tbody>${rows.map((r) => { const p = pl(r.id); return `<tr><td>${chipOf(p.p)} <span class="pname">${esc(p.n)}</span> ${ssTag(p)}<div class="sub">${p.t} · ${started(p) ? "game started" : esc(kickTxt(p))}</div></td>
         <td class="n">${fmt(r.proj)}</td><td class="n">${playTxt(r.pplay) || '<span class="muted">✓</span>'}</td><td class="n">${fmt(r.sum.p10)}</td><td class="n">${fmt(r.sum.p50)}</td><td class="n">${fmt(r.sum.p90)}</td><td class="n">${pct(r.sum.boom)}</td><td class="n">${pct(r.sum.bust)}</td>
         <td style="min-width:110px">${rangeBar(r.sum, mx, p.p)}</td></tr>`; }).join("") || `<tr><td colspan="9" class="muted">No players here this week.</td></tr>`}</tbody></table></div>
     <p class="notice" style="margin:8px 0 0">What moves a player's range is his projection, his position, his game and the chance he sits. His style matters much less than it seems: in 13,700 past player-games, receivers who live on long catches and touchdowns had about the same spread as possession receivers with the same projection, and the same held for backs (differences under 5%, and not stable from season to season). So a "safe" player isn't the better start just for being steady; compare the chances of the points you need above. Boom is a week of 1.5 times his projection or more, bust under half of it (both include the chance he sits).</p>`;
@@ -1568,6 +1629,14 @@ document.addEventListener("change", (ev) => {
       if (Object.keys(te).length) byPos.TE = te; else delete byPos.TE;
       state.settings.scoring.byPos = byPos;
       changed(); break;
+    }
+    case "tier": {
+      const key = t.dataset.key, v = +t.value;
+      if (!isFinite(v)) return;
+      const arr = (kdSet(state.settings.scoring, key) || []).slice();
+      arr[+t.dataset.i] = v;
+      state.settings.scoring[key] = arr;
+      ui.finder.results = null; changed(); break;
     }
     case "add": {
       const p = byLabel.get(t.value.trim().toLowerCase()) || DB.players.find((x) => x.n.toLowerCase() === t.value.trim().toLowerCase());

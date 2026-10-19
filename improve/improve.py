@@ -22,7 +22,9 @@ What it does, in order:
     hindsight. The expert-blend defaults are tuned on the graded live weeks instead (they need FantasyPros'
     rankings, which the backtest doesn't have): one step toward the best pair, 4+ graded weeks, z ≤ -2.
  4. At most one change per week (the passing change or bundle with the largest gain), so every change's effect can be read on its
-    own. Every experiment, passed or not, goes in ledger/experiments.jsonl; adopted and reverted changes
+    own. Kickers and D/ST have their own replay (backtest/kdst_backtest.py, params with eval "kdst"): up to KD_BUDGET of their
+    settings are tested each run (a rotation, plus the scorecard's K and D/ST leans) against the same gate, and when both
+    sides pass the one with the larger gain relative to its own average miss is adopted. Every experiment, passed or not, goes in ledger/experiments.jsonl; adopted and reverted changes
     also in ledger/changelog.md. A value already rejected under the same live parameters isn't retried
     for 6 weeks.
 """
@@ -44,6 +46,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, os.path.join(ROOT, "backtest"))
 sys.path.insert(0, os.path.join(ROOT, "pipeline"))
 import evaluate as ev  # noqa: E402
+import kdst_backtest as kb  # noqa: E402
 from ftlib import PARAMS_PATH, dump_params, engine_source, load_params_file, values  # noqa: E402
 
 LEDGER = os.path.join(ROOT, "ledger")
@@ -57,7 +60,7 @@ GATE_VERSION = 2   # v1 (Oct 9) required a 0.01-pt gain; the first full sweep sh
                    # model give 0.001-0.003 with z down to -3.5, so v2 asks for 0.002 and tests bundles
 GATE = dict(z=-2.5, min_gain=0.002, combo_z=-2.0, combo_max=4, season_z=1.0, pos_z=2.0, slope_slack=0.03, bqb_slack=0.3,
             live_z=1.5, expert_z=-2.0, expert_weeks=4, probation_weeks=4, keep_weeks=8, revert_z=-1.5,
-            retry_weeks=6, rotation_per_run=2, budget=8)
+            retry_weeks=6, rotation_per_run=2, budget=8, kd_budget=3)
 
 
 def today():
@@ -87,6 +90,12 @@ def week_index(label):
 # ----------------------------------------------------------------------------- parameter steps
 def tunable(pj, kind="backtest"):
     return [k for k, v in pj["params"].items() if v.get("eval") == kind and v.get("tunable", True)]
+
+
+def split_vals(pj, vals):
+    """(offense values, kicker/D-ST values): each backtest's champion is keyed on its own parameters only."""
+    off = {k: v for k, v in vals.items() if pj["params"].get(k, {}).get("eval") != "kdst"}
+    return off, {k: v for k, v in vals.items() if k not in off}
 
 
 def stepped(spec, cur, direction):
@@ -147,7 +156,7 @@ def build_candidates(pj, sc, state, rows, label, only=None, exact=None):
 
     if exact:
         for k, v in exact.items():
-            if k in pj["params"] and abs(vals[k] - v) > 1e-9:
+            if k in pj["params"] and pj["params"][k].get("eval") != "kdst" and abs(vals[k] - v) > 1e-9:
                 out.append({"change": {k: [vals[k], v]}, "source": "requested"})
         return out
     if only:
@@ -178,6 +187,49 @@ def build_candidates(pj, sc, state, rows, label, only=None, exact=None):
     return out[:GATE["budget"]]
 
 
+def build_kd_candidates(pj, sc, state, rows, label, only=None, exact=None):
+    """Kicker and D/ST experiments: requested ones, then the scorecard's K / D/ST leans, then a rotation (one
+    setting a run, both directions); at most GATE["kd_budget"]."""
+    vals = values(pj)
+    tun = set(tunable(pj, "kdst"))
+    ver = pj.get("version")
+    recent = {}
+    for r in rows:
+        if r.get("kind") == "kdst" and r.get("championVersion") == ver and r.get("decision") == "rejected":
+            for k, (_, new) in (r.get("change") or {}).items():
+                recent[(k, round(float(new), 6))] = r.get("week")
+    out, seen = [], set()
+
+    def add(k, direction, source):
+        new = stepped(pj["params"][k], vals[k], direction)
+        w = recent.get((k, round(float(new), 6))) if new is not None else None
+        if new is None or (k, new) in seen or (w is not None and week_index(label) - week_index(w) <= GATE["retry_weeks"]):
+            return
+        seen.add((k, new))
+        out.append({"change": {k: [vals[k], new]}, "source": source, "kind": "kdst"})
+
+    if exact:
+        return [{"change": {k: [vals[k], v]}, "source": "requested", "kind": "kdst"} for k, v in exact.items() if k in tun and abs(vals[k] - v) > 1e-9]
+    if only:
+        for k in only:
+            if k in tun:
+                add(k, +1, "requested")
+                add(k, -1, "requested")
+        return out
+    for lean in (sc or {}).get("candidates", []):
+        for k in lean.get("params", []):
+            if k in tun:
+                for direction in (+1, -1):
+                    add(k, direction, f"lean: {lean['area']}")
+    order = sorted(tun)
+    if order:
+        i = state.get("rotation_kd", 0) % len(order)
+        add(order[i], +1, "rotation")
+        add(order[i], -1, "rotation")
+        state["rotation_kd"] = (i + 1) % len(order)
+    return out[:GATE["kd_budget"]]
+
+
 # ----------------------------------------------------------------------------- gate
 def gate(r):
     """(passed, reasons) for a paired backtest result (evaluate.paired)."""
@@ -205,7 +257,7 @@ def trim(r):
     """The parts of a paired result worth keeping in the ledger."""
     return {k: r[k] for k in ("n", "diff", "se", "z", "seasons", "byPos")} | {
         "maeChamp": r["champ"]["mae"], "maeChal": r["chal"]["mae"], "slope": [r["champ"]["slope"], r["chal"]["slope"]],
-        "backupQbBias": [r["champ"].get("backupQbBias"), r["chal"].get("backupQbBias")]}
+        "backupQbBias": [r["champ"].get("backupQbBias"), r["chal"].get("backupQbBias")], "byPosMae": {"champ": r["champ"].get("byPos"), "chal": r["chal"].get("byPos")}}
 
 
 # ----------------------------------------------------------------------------- live checks (archived weeks)
@@ -350,9 +402,10 @@ def probation_review(pj, state, label, current_season, last_done, dry):
             old[k] = prev
         if any(abs(old[k] - vals[k]) < 1e-9 for k in e["change"]):   # already moved on from this value
             continue
-        cur_p = ev.predict(vals, weeks)
-        old_p = ev.predict(old, weeks)
-        r = ev.paired(cur_p, old_p)   # old minus current
+        bt = kb if e.get("kind") == "kdst" else ev     # kickers and D/ST: their own replay
+        cur_p = bt.predict(vals, weeks)
+        old_p = bt.predict(old, weeks)
+        r = bt.paired(cur_p, old_p)   # old minus current
         row = {"date": today(), "week": label, "kind": "probation", "change": e["change"], "source": "probation",
                "championVersion": pj.get("version"), "eval": trim(r)}
         if r.get("z") is not None and r["z"] <= GATE["revert_z"]:
@@ -399,14 +452,18 @@ def parity_check(champ):
 # ----------------------------------------------------------------------------- champion predictions
 CHAMP = os.path.join(ROOT, "data", "backtest", "champion.csv.gz")
 CHAMP_META = os.path.join(ROOT, "data", "backtest", "champion.json")
+KD_CHAMP = os.path.join(ROOT, "data", "backtest", "kdst_champion.csv.gz")
+KD_CHAMP_META = os.path.join(ROOT, "data", "backtest", "kdst_champion.json")
 
 
-def save_champion(champ, vals, weeks, version):
-    """Backtest predictions of the live parameters, for the neutral check after code changes."""
-    os.makedirs(os.path.dirname(CHAMP), exist_ok=True)
-    champ[["season", "week", "id", "pos", "pred", "actual"]].round(4).to_csv(CHAMP, index=False)
+def save_champion(champ, vals, weeks, version, kd=False):
+    """Backtest predictions of the live parameters, for the neutral check after code changes (kd: the kicker and
+    D/ST replay's). Each is keyed on the hash of its own parameters."""
+    path, meta = (KD_CHAMP, KD_CHAMP_META) if kd else (CHAMP, CHAMP_META)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    champ[["season", "week", "id", "pos", "pred", "actual"]].round(4).to_csv(path, index=False)
     json.dump({"date": today(), "paramsVersion": version, "paramsHash": ev.params_hash(vals), "codeHash": ev.code_hash(),
-               "weeks": {str(k): v for k, v in weeks.items()}}, open(CHAMP_META, "w"), indent=1)
+               "weeks": {str(k): v for k, v in weeks.items()}}, open(meta, "w"), indent=1)
 
 
 def neutral_check():
@@ -414,20 +471,27 @@ def neutral_check():
     predictions saved by the last run (same weeks, same parameter values for the old parameters)."""
     if not os.path.exists(CHAMP):
         sys.exit("no saved champion predictions (data/backtest/champion.csv.gz); run improve.py once first")
-    meta = json.load(open(CHAMP_META))
-    weeks = {int(k): v for k, v in meta["weeks"].items()}
-    old = pd.read_csv(CHAMP)
     pj = load_params_file()
-    base = {k: v for k, v in values(pj).items() if not pj["params"][k].get("new")}
-    if meta.get("paramsHash") not in (ev.params_hash(base), ev.params_hash(values(pj))):
-        print(f"note: the saved champion ({meta.get('date')}) was made with other parameter values than the live ones; "
-              "refresh it with a full improve.py run (or --dry-run after deleting data/backtest/champion.csv.gz) on main")
-    new = ev.predict(values(pj), weeks)
-    M = old.merge(new[["season", "week", "id", "pred"]], on=["season", "week", "id"], how="outer", suffixes=("_old", "_new"))
-    missing = int(M.pred_old.isna().sum() + M.pred_new.isna().sum())
-    diff = float((M.pred_old - M.pred_new).abs().max())
-    ok = missing == 0 and diff < 1e-3
-    print(f"neutral check: {len(M)} player-weeks, max difference {diff:.6f}, unmatched {missing} → {'OK' if ok else 'CHANGED'}")
+    off, kdv = split_vals(pj, values(pj))
+    ok = True
+    for name, path, meta_path, bt, vals_ in (("offense", CHAMP, CHAMP_META, ev, off), ("kickers and D/ST", KD_CHAMP, KD_CHAMP_META, kb, kdv)):
+        if not os.path.exists(path):
+            print(f"neutral check ({name}): no saved champion yet; a full improve.py run (or --dry-run) creates it")
+            continue
+        meta = json.load(open(meta_path))
+        weeks = {int(k): v for k, v in meta["weeks"].items()}
+        old = pd.read_csv(path)
+        base = {k: v for k, v in vals_.items() if not pj["params"][k].get("new")}
+        if meta.get("paramsHash") not in (ev.params_hash(base), ev.params_hash(vals_)):
+            print(f"note: the saved {name} champion ({meta.get('date')}) was made with other parameter values than the live ones; "
+                  f"refresh it with a full improve.py run (or --dry-run after deleting {os.path.relpath(path, ROOT)}) on main")
+        new = bt.predict(values(pj), weeks)
+        M = old.merge(new[["season", "week", "id", "pred"]], on=["season", "week", "id"], how="outer", suffixes=("_old", "_new"))
+        missing = int(M.pred_old.isna().sum() + M.pred_new.isna().sum())
+        diff = float((M.pred_old - M.pred_new).abs().max())
+        this = missing == 0 and diff < 1e-3
+        ok = ok and this
+        print(f"neutral check ({name}): {len(M)} player-weeks, max difference {diff:.6f}, unmatched {missing} → {'OK' if this else 'CHANGED'}")
     sys.exit(0 if ok else 1)
 
 
@@ -474,7 +538,7 @@ def main():
     report.append(f"- Live parameters on the backtest: average miss {base['mae']:.3f} over {base['n']:,} player-games (calibration slope {base['slope']}).")
     parity = parity_check(champ)
     if parity:
-        report.append(f"- Backtest vs live engine ({parity['week']}, hindsight): r {parity['r']}, mean difference {parity['meanAbsDiff']} pts — {'OK' if parity['ok'] else 'OUT OF LINE: no changes adopted until fixed'}.")
+        report.append(f"- Backtest vs live engine ({parity['week']}, hindsight): r {parity['r']}, mean difference {parity['meanAbsDiff']} pts — {'OK' if parity['ok'] else 'OUT OF LINE: no offense changes adopted until fixed'}.")
     results = []
     for c in cands:
         chal_vals = dict(vals)
@@ -529,17 +593,39 @@ def main():
         report.append(f"- Expert defaults {describe(expx['change'])} on {expx['eval']['weeks']} graded weeks: {expx['eval']['diff']:+.4f} ± {expx['eval']['se']} (z {expx['eval']['z']})"
                       f" → {'passes' if expx['passed'] else 'rejected'}")
 
-    # 4. adopt at most one change
+    # 3b. kickers and D/ST: their own replay (backtest/kdst_backtest.py), the same gate
+    only = [x for x in a.only.split(",") if x]
+    kd_cands = build_kd_candidates(pj, sc_json, state, rows, label, only=only, exact=exact)
+    kd_results, kd_champ = [], None
+    if kd_cands or not (only or exact):
+        kd_champ = kb.predict(vals, weeks)
+        kb0 = kb.summarize(kd_champ)
+        report.append(f"- Kickers and D/ST on their replay: average miss {kb0['mae']:.3f} over {kb0['n']:,} player-games ("
+                      + ", ".join(f"{'D/ST' if p == 'DST' else p} {x['mae']:.3f}" for p, x in kb0["byPos"].items()) + ").")
+    for c in kd_cands:
+        chal_vals = dict(vals)
+        chal_vals.update({k: new for k, (_, new) in c["change"].items()})
+        r = kb.paired(kd_champ, kb.predict(chal_vals, weeks))
+        ok, why = gate(r)
+        kd_results.append((c, r, ok, why, None))
+        report.append(f"- Tested {describe(c['change'])} (kickers and D/ST, {c['source']}): {r['diff']:+.4f} ± {r['se']:.4f} pts (z {r['z']})"
+                      f" → {'passes' if ok else 'rejected: ' + '; '.join(why)}")
+
+    # 4. adopt at most one change: the passing change with the largest gain relative to its own replay's average
+    # miss (the offense's backtest parity guard doesn't hold up kicker and D/ST changes)
     winner = None
     blocked = (parity is not None and not parity["ok"]) or changed is not None or a.dry_run
-    passing = sorted([x for x in results if x[2]], key=lambda x: x[1]["diff"])
-    if passing and not blocked:
-        winner = ("backtest",) + passing[0]
+    blocked_kd = changed is not None or a.dry_run
+    rel = lambda r: -r["diff"] / max(1e-9, r["champ"]["mae"])  # noqa: E731
+    passing = [("backtest",) + x for x in results if x[2] and not blocked] + [("kdst",) + x for x in kd_results if x[2] and not blocked_kd]
+    passing.sort(key=lambda x: -rel(x[2]))
+    if passing:
+        winner = passing[0]
     elif expx and expx["passed"] and not blocked:
         winner = ("live", expx, None, True, [], None)
-    for kind, c, r, ok, why, live in [("backtest",) + x for x in results]:
+    for kind, c, r, ok, why, live in [("backtest",) + x for x in results] + [("kdst",) + x for x in kd_results]:
         decision = "promoted" if winner and winner[1] is c else ("passed, not adopted" if ok else "rejected")
-        row = {"date": today(), "week": label, "kind": "backtest", "change": c["change"], "source": c["source"],
+        row = {"date": today(), "week": label, "kind": kind, "change": c["change"], "source": c["source"],
                "championVersion": pj.get("version"), "gateVersion": GATE_VERSION, "eval": trim(r), "live": live, "decision": decision,
                "reason": "; ".join(why) if why else ("largest passing gain" if decision == "promoted" else
                                                     ("another change was adopted this week" if not blocked else "adoption blocked this run")),
@@ -553,16 +639,17 @@ def main():
                            "championVersion": pj.get("version"), "eval": expx["eval"], "decision": decision,
                            "reason": "; ".join(expx["why"]), "summary": f"{describe(expx['change'])}: {expx['eval']['diff']:+.4f} (z {expx['eval']['z']})"})
     if winner and not a.dry_run:
-        if winner[0] == "backtest":
+        if winner[0] in ("backtest", "kdst"):
             c, r = winner[1], winner[2]
             seas = ", ".join(f"{k} {v['diff']:+.3f}" for k, v in r["seasons"].items())
-            reason = (f"Backtest: average miss {r['champ']['mae']:.3f} → {r['chal']['mae']:.3f} on {r['n']:,} player-games "
+            what = "Kicker and D/ST replay" if winner[0] == "kdst" else "Backtest"
+            reason = (f"{what}: average miss {r['champ']['mae']:.3f} → {r['chal']['mae']:.3f} on {r['n']:,} player-games "
                       f"({r['diff']:+.4f} ± {r['se']:.4f}, z {r['z']}; by season {seas}). Source: {c['source']}. "
                       f"On probation: re-checked on the weeks played from {label} on.")
             ver = write_params(pj, c["change"], reason)
             # an earlier change to the same parameter is superseded: the new entry is checked against it
             state["probation"] = [e for e in state.get("probation", []) if not set(e["change"]) & set(c["change"])]
-            state["probation"].append({"change": c["change"], "since": label, "kind": "backtest", "version": ver})
+            state["probation"].append({"change": c["change"], "since": label, "kind": winner[0], "version": ver})
             report.append(f"\n**Adopted:** {describe(c['change'])} (parameters v{ver}).")
         else:
             x = winner[1]
@@ -577,18 +664,28 @@ def main():
         report.append("\nNo change adopted this week." + (" (dry run)" if a.dry_run else ""))
     if not a.dry_run:
         pj_now = load_params_file()
-        tested = {k for c, *_ in results for k in c["change"]}
+        tested = {k for c, *_ in results + kd_results for k in c["change"]}
         if any(pj_now["params"][k].pop("new", None) for k in tested if k in pj_now["params"]):
             dump_params(pj_now)
-        # the champion file must hold the predictions of the parameters now live (after an adoption or a
+        # the champion files must hold the predictions of the parameters now live (after an adoption or a
         # revert they differ from the ones this run started with)
-        vals_now = values(load_params_file())
-        if vals_now != vals:
+        pj_now = load_params_file()
+        vals_now = values(pj_now)
+        off_now, kd_now = split_vals(pj_now, vals_now)
+        if split_vals(pj, vals)[0] != off_now:
             champ = ev.predict(vals_now, weeks, a.procs)
-        save_champion(champ, vals_now, weeks, load_params_file().get("version"))
-    elif not os.path.exists(CHAMP):
-        save_champion(champ, vals, weeks, pj.get("version"))   # first run: a dry run creates the neutral-check baseline
-    state["lastRun"] = {"date": today(), "week": label, "tested": len(results) + (1 if expx else 0),
+        save_champion(champ, off_now, weeks, pj_now.get("version"))
+        if kd_champ is not None:
+            if split_vals(pj, vals)[1] != kd_now:
+                kd_champ = kb.predict(vals_now, weeks)
+            save_champion(kd_champ, kd_now, weeks, pj_now.get("version"), kd=True)
+    else:
+        # first run: a dry run creates the neutral-check baselines
+        if not os.path.exists(CHAMP):
+            save_champion(champ, split_vals(pj, vals)[0], weeks, pj.get("version"))
+        if kd_champ is not None and not os.path.exists(KD_CHAMP):
+            save_champion(kd_champ, split_vals(pj, vals)[1], weeks, pj.get("version"), kd=True)
+    state["lastRun"] = {"date": today(), "week": label, "tested": len(results) + len(kd_results) + (1 if expx else 0),
                         "adopted": describe(winner[1]["change"]) if winner and not a.dry_run else None, "parity": parity}
     if not a.dry_run:
         json.dump(state, open(STATE, "w"), indent=1)

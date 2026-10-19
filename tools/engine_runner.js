@@ -8,7 +8,7 @@
 //           Players on those teams who played are set healthy, the rest out for the week, as if the
 //           week's news had been known (a manual "out" entry, the same mechanism the page uses).
 // --lite    skip half-PPR/standard and the per-component runs (faster; used by replays)
-// Default league settings: 12 teams, PPR. Output: {meta, players: [...]}, one row per player.
+// Default league settings: 12 teams, PPR (kickers and defenses: ESPN standard). Output: {meta, players: [...]}, one row per player.
 const fs = require("fs");
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : null; };
@@ -38,7 +38,10 @@ if (!lite) for (const [name, rec] of [["half", 0.5], ["std", 0]]) V[name] = E.va
 const comp = lite ? null : KEYS.map((k) => E.usageModel(DB, league(unit(k))).res);
 // opportunities: with catch rate, INT rate and fumble rate set to 1, those components count targets,
 // pass attempts and (carries + targets) or (attempts + QB carries)
-const DB2 = { ...DB, players: DB.players.map((p) => { const m = p.m.slice(); m[5] = 1; m[10] = 1; m[12] = 1; return { ...p, m }; }) };
+const DB2 = { ...DB, players: DB.players.map((p) => { if (!p.m) return p; const m = p.m.slice(); m[5] = 1; m[10] = 1; m[12] = 1; return { ...p, m }; }) };
+// kickers and team defenses (pipeline/kdst.py): projected in standard scoring (receptions don't touch them); no
+// carries, targets or attempts, and no per-component runs
+const KD = new Set(["K", "DST"]);
 const oT = E.usageModel(DB2, league(unit("rec"), DB2)).res, oA = E.usageModel(DB2, league(unit("int"), DB2)).res, oO = E.usageModel(DB2, league(unit("fumble"), DB2)).res;
 const r3 = (x) => (x == null || !isFinite(x) ? null : Math.round(x * 1000) / 1000);
 const r2 = (x) => (x == null || !isFinite(x) ? null : Math.round(x * 100) / 100);
@@ -47,7 +50,8 @@ for (const p of DB.players) {
   const v = V.ppr.get(p.id);
   if (!v) continue;
   const env = v.env && v.env[0];
-  const tgt = p.p === "QB" ? 0 : oT.get(p.id).now[0], att = p.p === "QB" ? oA.get(p.id).now[0] : 0, opp = oO.get(p.id).now[0];
+  const kd = KD.has(p.p);
+  const tgt = p.p === "QB" || kd ? 0 : oT.get(p.id).now[0], att = p.p === "QB" ? oA.get(p.id).now[0] : 0, opp = kd ? 0 : oO.get(p.id).now[0];
   const row = {
     id: p.id, name: p.n, pos: p.p, team: p.t, age: p.age ?? null, g26: p.g26 || 0, g25: p.g25 || 0, g24: p.g24 || 0,
     dc: p.dc ?? null, er: p.er ?? null, ew: p.ew ?? null, own: p.own ?? null, inj: p.inj || "",
@@ -62,7 +66,7 @@ for (const p of DB.players) {
   if (!lite) {
     row.page_half = r3(V.half.get(p.id).weekly[0]);
     row.page_std = r3(V.std.get(p.id).weekly[0]);
-    ["py", "ptd", "int", "ry", "rtd", "rec", "recy", "rectd", "fl", "two"].forEach((c, i) => { row["c_" + c] = r3(comp[i].get(p.id).now[0]); });
+    ["py", "ptd", "int", "ry", "rtd", "rec", "recy", "rectd", "fl", "two"].forEach((c, i) => { row["c_" + c] = kd ? 0 : r3(comp[i].get(p.id).now[0]); });
   }
   out.push(row);
 }

@@ -25,7 +25,7 @@ obviously wrong data.
 ## 2. CBS Sports injury pages (all 32 teams)
 WebFetch `https://www.cbssports.com/nfl/teams/{CODE}/{slug}/injuries/` with the prompt:
 "Copy the whole injury table verbatim (all positions): player | position | updated | injury | injury status."
-Keep only QB, RB, WR, TE rows. Write `cbs_injuries.tsv` with header `team	player	pos	injury	status`
+Keep QB, RB, WR, TE and K rows (kickers have injury timelines too; team defenses don't). Write `cbs_injuries.tsv` with header `team	player	pos	injury	status`
 (tab-separated, team = CBS code below, status text verbatim). If a page comes back empty, retry once.
 
 ARI arizona-cardinals · ATL atlanta-falcons · BAL baltimore-ravens · BUF buffalo-bills · CAR carolina-panthers · CHI chicago-bears · CIN cincinnati-bengals · CLE cleveland-browns · DAL dallas-cowboys · DEN denver-broncos · DET detroit-lions · GB green-bay-packers · HOU houston-texans · IND indianapolis-colts · JAC jacksonville-jaguars · KC kansas-city-chiefs · LV las-vegas-raiders · LAC los-angeles-chargers · LAR los-angeles-rams · MIA miami-dolphins · MIN minnesota-vikings · NE new-england-patriots · NO new-orleans-saints · NYG new-york-giants · NYJ new-york-jets · PHI philadelphia-eagles · PIT pittsburgh-steelers · SF san-francisco-49ers · SEA seattle-seahawks · TB tampa-bay-buccaneers · TEN tennessee-titans · WAS washington-commanders
@@ -47,8 +47,9 @@ availability, grades rest-of-season projections, sweeps the expert weights, and 
 ## 5. Improve the model (runbooks/improve-agent.md has the details)
 - First the agent step in improve-agent.md §2 (usually nothing to do).
 - Then `python3 ../improve/improve.py` (5–10 minutes). It re-checks changes on probation, tests up to 8
-  parameter changes, and adopts at most one that passes the gate, editing `../params/params.json` and
-  writing `../ledger/`. Read `../ledger/last_run.md` for the summary.
+  parameter changes on the offense backtest and up to 3 kicker/D-ST settings on their own replay
+  (`backtest/kdst_backtest.py`), and adopts at most one change in all that passes the gate, editing
+  `../params/params.json` and writing `../ledger/`. Read `../ledger/last_run.md` for the summary.
 - If it errors, run it again once with `--budget 4`; if it still fails, skip it this week and report.
 
 ## 5b. Recalibrate the start/sit distributions
@@ -60,7 +61,9 @@ The projection model may have changed in step 5, and with it how far its numbers
 
 ## 6. Final build and checks
 - `python3 ../pipeline/build_db.py` — with the live parameters (step 5 may have changed them).
-- Sanity: 350–500 players; the current week is right; `sources` dates recent; absences plausible
+- Sanity: 400–580 players, including 32 defenses and 28+ kickers (the line "kickers and defenses: N kickers, 32
+  defenses; week W (standard scoring) D/ST: ... | K: ..." names the week's top ones; implausible names or a
+  missing team means a roster problem: report it); the current week is right; `sources` dates recent; absences plausible
   (season-ending at 18, IR returns on sensible weeks); "weekly expert ranks for week N" names the current
   week (None is fine: FantasyPros hasn't posted yet); game-environment swings roughly −30% to +25%.
 - `python3 ../tests/run_tests.py` must pass. If it fails only after a parameter change from step 5: restore
@@ -109,7 +112,8 @@ isn't the same moment as the printed `next.at`, `update_trigger` it with `cron_e
 
 ## 11. Report
 A short summary: data week; notable injury changes; last week's average miss for our page vs FantasyPros
-Tuesday vs FantasyPros final, and with hindsight; start/sit %; the goal lines; what the improvement loop
-tested and adopted or reverted (from `ledger/last_run.md`); the distribution recalibration line (5b); whether
+Tuesday vs FantasyPros final, and with hindsight; start/sit %; the goal lines; kickers and defenses (the
+scorecard's "Kickers and defenses" section: our miss and start/sit % vs FantasyPros, from the Week 7 freeze on); what the improvement loop
+tested and adopted or reverted, kicker/D-ST settings included (from `ledger/last_run.md`); the distribution recalibration line (5b); whether
 the push landed; anything that failed. If the season is over
 (no unplayed regular-season games): grade, publish the scorecard, commit, and say so.

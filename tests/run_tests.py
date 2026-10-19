@@ -24,6 +24,7 @@ from ftlib import ENGINE_KEYS, backtest_params, engine_source, load_params_file,
 
 W5 = os.path.join(ROOT, "data", "inputs", "2026", "w05")
 FIX = os.path.join(ROOT, "tests", "fixtures", "user-league-w05.json")
+KD_DB = os.path.join(ROOT, "tests", "fixtures", "db-kdst-w06.json")   # a build with kickers and defenses (Oct 19, 2026)
 TESTS = []
 
 
@@ -40,16 +41,20 @@ def node(*args):
 
 @test
 def params_file_is_consistent():
+    import kdst
     pj = load_params_file()
     src_b = open(os.path.join(ROOT, "pipeline", "build_db.py")).read()
     for k, v in pj["params"].items():
         assert v["min"] <= v["value"] <= v["max"], f"{k} outside its bounds"
         assert ("step" in v) != ("mult" in v), f"{k} needs exactly one of step / mult"
-        assert v["layer"] in ("builder", "engine") and v["eval"] in ("backtest", "live", "none"), k
-        if v["layer"] == "builder":
+        assert v["layer"] in ("builder", "engine") and v["eval"] in ("backtest", "live", "none", "kdst"), k
+        if v["eval"] == "kdst":   # kickers and D/ST: kdst.py settings, read by the builder and the K/DST replay
+            assert k in kdst.DEFAULTS and "prm(k_, v_) for k_, v_ in kdst.DEFAULTS" in src_b, f"builder doesn't read {k}"
+        elif v["layer"] == "builder":
             assert f'prm("{k}"' in src_b or (k.startswith("K_") and 'prm("K_" + k_' in src_b), f"builder doesn't read {k}"
         else:
             assert k in ENGINE_KEYS, f"engine doesn't read {k}"
+    assert set(kdst.DEFAULTS) == {k for k, v in pj["params"].items() if v["eval"] == "kdst"}, "kdst.DEFAULTS and params.json disagree"
     bp = backtest_params(values(pj))
     import backtest_core as bc
     for k in bp:
@@ -62,7 +67,7 @@ def page_assembles_and_matches_archived_engine():
     import make_page
     from scorecard import engine_from_page
     html = make_page.build(open(os.path.join(W5, "db.json")).read(), open(os.path.join(W5, "injury_news.json")).read())
-    for ph in ("{{DB}}", "{{ENGINE}}", "{{UI}}", "{{BUILDER}}", "{{RUNBOOK}}", "{{PARAMS}}", "{{INJNEWS}}"):
+    for ph in ("{{DB}}", "{{ENGINE}}", "{{UI}}", "{{BUILDER}}", "{{KDST}}", "{{RUNBOOK}}", "{{PARAMS}}", "{{INJNEWS}}"):
         assert ph not in html
     assert html.count("<script") == html.count("</script>"), "unbalanced script elements"
     eng, db_text, _ = engine_from_page(html)
@@ -320,6 +325,85 @@ def startsit_matches_reference_simulation():
         f"engine vs reference: mean {d_mean.mean():.2f}, P50 {d_q[:, 1].mean():.2f}, P90 {d_q[:, 2].mean():.2f}"
     ratio = (F.js_mean.values / F.pred.values)[m]
     assert 0.95 < np.median(ratio) < 1.05, f"uncalibrated simulation doesn't reproduce the projections ({np.median(ratio):.3f})"
+
+
+@test
+def kdst_engine_behaves():
+    """Kickers and defenses in the engine, on a fixed build that has them: scoring the same as pipeline/kdst.py
+    (ESPN standard), K and D/ST slots that only they fill, one of each drafted per team, near-zero trade prices,
+    none in the trade finder, a simulation whose means are the projections and whose spreads and links match box
+    scores, and an ESPN import that brings them and their scoring in."""
+    import kdst
+    with tempfile.TemporaryDirectory() as td:
+        ep = os.path.join(td, "e.js")
+        open(ep, "w").write(engine_source())
+        r = node(os.path.join(ROOT, "tests", "kdst_checks.js"), ep, KD_DB)
+    sc = r["scoring"]
+    for k, v in sc["defaults"].items():
+        assert kdst.STANDARD[k] == v, f"engine default {k} = {v}, kdst.py {kdst.STANDARD[k]}"
+    assert abs(sc["k"] - kdst.k_points(sc["kv"])) < 1e-9 and abs(sc["d"] - kdst.d_points(sc["dv"])) < 1e-9, "engine and kdst.py score differently"
+    assert r["lineup"]["k"] == 7, "a kicker or defense took a FLEX or superflex slot"
+    lg = r["league"]
+    assert all(x == "11" for x in lg["kd"]), f"sample draft: kickers/defenses per team {lg['kd']}"
+    assert "K" in lg["slots"] and "DST" in lg["slots"] and all(x == 2 for x in lg["lineupKd"]) and lg["flexKd"]
+    assert lg["mu"]["max"] < 1.0 < lg["mu"]["top"], f"kicker/defense trade prices {lg['mu']}"
+    assert lg["finderKd"] == 0, "the trade finder suggested kickers or defenses"
+    assert 8 <= lg["ppg"]["K"][0] <= 12 and 5 <= lg["ppg"]["DST"][0] <= 10, f"top kicker/defense projections {lg['ppg']}"
+    for pos, (lo, hi) in (("K", (3.8, 5.8)), ("DST", (4.6, 7.2))):
+        x = r["sim"][pos]
+        assert x["n"] >= 20 and 0.93 <= x["ratioMin"] and x["ratioMax"] <= 1.07, f"{pos} simulated means vs projections: {x}"
+        assert lo <= x["sd"] <= hi, f"{pos} simulated spread {x['sd']:.2f} (box scores: K 4.6, D/ST 5.9)"
+    assert r["sim"]["corr"]["qbOppDst"] < -0.2, f"a D/ST doesn't move against the QB it faces: {r['sim']['corr']}"
+    ss = r["sim"]["startSit"]
+    assert ss["kd"] == 0 and ss["best"] == ss["slots"] and ss["bestKd"] == 2, f"start/sit with kickers and defenses: {ss}"
+    e = r["espn"]
+    assert e["roster"] == e["want"] and e["slots"]["K"] == 1 and e["slots"]["DST"] == 1 and not e["report"]["unmatched"]
+    assert e["report"]["kdst"] == 0 and e["report"]["ignoredScoring"] == 0
+    s_ = e["scoring"]
+    assert s_["fg60"] == s_["fg50"] == 5 and s_["dTd"] == 6 and s_["stTd"] == 6 and s_["fgMiss"] == -1
+    assert s_["paTier"] == [10, 7, 0, 0, 0, 0, 0, 0, -4] and s_["yaTier"] == [5, 0, 0, 0, 0, 0, 0, 0, -7]
+
+
+@test
+def kdst_builder_output_is_sane():
+    """The fixed build's kickers and defenses: one D/ST per team with ESPN's id, kickers matched to teams, weekly
+    stat lines of the right length with tier chances that add up."""
+    import kdst
+    DB = json.load(open(KD_DB))
+    d = [p for p in DB["players"] if p["p"] == "DST"]
+    k = [p for p in DB["players"] if p["p"] == "K"]
+    assert len(d) == 32 and len({p["t"] for p in d}) == 32 and all(p["id"] == "DST-" + p["t"] and p["espn"] < -16000 for p in d)
+    assert len(k) >= 28 and len({p["t"] for p in k}) >= 28
+    assert DB["kdst"]["kComp"] == kdst.K_COMP and DB["kdst"]["dComp"] == kdst.D_COMP
+    assert abs(sum(p for _, p in DB["kdst"]["sim"]["paResid"]) - 1) < 1e-3
+    for p in d + k:
+        n = len(kdst.D_COMP if p["p"] == "DST" else kdst.K_COMP)
+        assert len(p["s"]) == n and len(p["f"]) == n and p["kw"], p["n"]
+        for w, v in p["kw"].items():
+            assert len(v) == n and min(v[:9 if p["p"] == "DST" else n]) >= 0, (p["n"], w)
+            if p["p"] == "DST":
+                assert abs(sum(v[9:18]) - 1) < 0.01 and abs(sum(v[18:27]) - 1) < 0.01, (p["n"], w, "tier chances")
+
+
+@test
+def kdst_backtest_beats_naive_references():
+    """The kicker and D/ST replay beats each unit's season-to-date average (needs the season files in work/)."""
+    work = os.path.join(ROOT, "work")
+    need = ["s23.csv", "s24.csv", "s25.csv", "games.csv"]
+    if not all(os.path.exists(os.path.join(work, f)) for f in need):
+        print("      (kicker/D-ST backtest check skipped: no season files in work/)")
+        return
+    import kdst_backtest as kb
+    cwd = os.getcwd()
+    os.chdir(work)
+    try:
+        weeks = {2025: list(range(3, 13))}
+        A = kb.predict(values(load_params_file()), weeks)
+        B = kb.baselines(A, weeks)
+    finally:
+        os.chdir(cwd)
+    assert B["DST"]["model"] < B["DST"]["seasonAvg"] - 0.2, f"D/ST: {B['DST']}"
+    assert B["K"]["model"] < B["K"]["seasonAvg"], f"K: {B['K']}"
 
 
 @test

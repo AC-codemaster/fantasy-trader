@@ -3,7 +3,8 @@
     python3 tools/make_page.py --db db.json --injnews injury_news.json --out fantasy-trader.html
 
 page/template.html + engine/engine.js (PARAMS line from params/params.json) + page/ui.js, with the week's
-data (db.json, injury_news.json), and the builder, runbook and parameter file embedded as fallbacks.
+data (db.json, injury_news.json), and the builder (with pipeline/kdst.py, which it imports), runbook and parameter
+file embedded as fallbacks.
 The output is the page source to publish (Artifact publish with url = the live page).
 """
 import argparse
@@ -22,6 +23,7 @@ def build(db_text, injnews_text, params_path=None):
         "DB": esc_script(db_text.strip()),
         "INJNEWS": esc_script(injnews_text.strip()),
         "BUILDER": esc_script(open(os.path.join(ROOT, "pipeline", "build_db.py")).read()),
+        "KDST": esc_script(open(os.path.join(ROOT, "pipeline", "kdst.py")).read()),   # the builder imports it
         "PARAMS": esc_script(json.dumps(pj, indent=1)),
         "RUNBOOK": esc_script(open(os.path.join(ROOT, "runbooks", "weekly.md")).read()),
         "ENGINE": esc_script(engine_source(values(pj)), js=True),

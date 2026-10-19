@@ -17,6 +17,7 @@ Run from the work folder. What "describes what happened" means here:
 """
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -397,26 +398,46 @@ def fit_pplay(seasons=(2023, 2024, 2025), min_share=0.35):
     return out
 
 
-def fit_kdst(years=(2024, 2025)):
-    """Kickers and team defenses aren't modeled, but they add noise to every matchup. Kicker: the week-to-week
-    spread of regular kickers in ESPN scoring (PAT 1, FG 3/4/5 by distance, misses -1) from box scores. Team
-    defense: a typical spread for ESPN defense scoring (the data has no team defense box scores)."""
-    sds = []
-    for y in years:
-        p = f"s{str(y)[2:]}.csv"
-        if not os.path.exists(p):
-            continue
-        d = pd.read_csv(p, low_memory=False)
-        k = d[(d.position == "K") & (d.season_type == "REG")]
-        if "pat_made" not in k:
-            continue
-        g = lambda c: k[c].fillna(0) if c in k else 0  # noqa: E731
-        pts = (g("pat_made") - g("pat_missed") + 3 * (g("fg_made_0_19") + g("fg_made_20_29") + g("fg_made_30_39"))
-               + 4 * g("fg_made_40_49") + 5 * (g("fg_made_50_59") + g("fg_made_60_")) - g("fg_missed"))
-        s = pd.DataFrame({"id": k.player_id, "pts": pts}).groupby("id").pts.agg(["size", "std"])
-        sds += list(s[s["size"] >= 10]["std"])
-    k_sd = float(np.sqrt(np.mean(np.square(sds)))) if sds else 4.7
-    return {"k_sd": round(k_sd, 2), "dst_sd": 6.0, "note": "kicker fitted on box scores; team defense typical value"}
+def fit_kdst(years=None):
+    """How kickers' and defenses' weeks spread, from box scores (pipeline/kdst.py tables), for the page's start/sit
+    simulation. k_sd / dst_sd: week-to-week spread of their points (ESPN standard), used only for data without
+    kickers or defenses. pat_rho: PATs vs the team's offensive touchdowns; pat_fga: PAT tries vs field-goal tries;
+    fga_vm: field-goal tries' variance over their mean (below 1: steadier than Poisson). pa_rho: points allowed vs the opposing offense's touchdowns; ya_pa:
+    yards allowed vs points allowed. ev: for sacks, interceptions and fumble recoveries, [sigma, c]: a game shock
+    of size sigma on the rate (from the variance over the mean) that moves with a good defensive day (low points
+    allowed) by c, so the simulated events keep their real correlation with points allowed."""
+    sys.path.insert(0, os.path.join(HERE, "..", "pipeline"))
+    import kdst
+    if years is None and os.path.exists("games.csv"):   # the last four completed regular seasons with box scores here
+        g = pd.read_csv("games.csv", low_memory=False)
+        g = g[g.game_type == "REG"]
+        done = sorted(int(y) for y, d in g.groupby("season") if d.home_score.notna().all() and os.path.exists(f"s{str(y)[2:]}.csv"))
+        years = done[-4:]
+    st = {y: pd.read_csv(f"s{str(y)[2:]}.csv", low_memory=False) for y in (years or []) if os.path.exists(f"s{str(y)[2:]}.csv")}
+    if not st or not os.path.exists("games.csv"):
+        return None
+    TG, KG = kdst.history(st, pd.read_csv("games.csv", low_memory=False))
+    S = pd.concat(st.values())
+    S = S[S.season_type == "REG"]
+    tds = S.groupby(["season", "week", "team"])[["passing_tds", "rushing_tds"]].sum().sum(axis=1).rename("td").reset_index()
+    T = TG.merge(tds.rename(columns={"team": "opp", "td": "otd"}), on=["season", "week", "opp"], how="left")
+    dp = np.array([kdst.d_points(v) for v in kdst.actual_dst(TG)[kdst.D_COMP].values.astype(float)])
+    kp = KG.assign(pts=[kdst.k_points(v) for v in kdst.actual_k(KG)[kdst.K_COMP].values.astype(float)])
+    regular = kp.groupby("id").pts.agg(["size", "std"])
+    k_sd = float(np.sqrt(np.mean(np.square(regular[regular["size"] >= 10]["std"]))))
+    kt = KG.groupby(["season", "week", "team"]).patM.sum().rename("pat").reset_index().merge(tds, on=["season", "week", "team"])
+    zc = 0.97   # how closely points allowed follow its own latent normal (integer scores, tiers); fitted in the sim
+    ev = {}
+    for c in ("sk", "it", "fr"):
+        lam, vm = float(T[c].mean()), float(T[c].var() / T[c].mean())
+        sig2 = math.log(1 + max(0.02, vm - 1) / lam)
+        cmax = math.sqrt(lam * (math.exp(sig2) - 1) / max(vm, 1.0)) * zc
+        r = float(-T[c].corr(T.pa))
+        ev[c] = [round(math.sqrt(sig2), 3), round(min(1.0, max(0.0, r / cmax)), 3)]
+    return {"k_sd": round(k_sd, 2), "dst_sd": round(float(dp.std()), 2), "pat_rho": round(float(kt.pat.corr(kt.td)), 3),
+            "pat_fga": round(float(TG.pata.corr(TG.fga)), 3), "fga_vm": round(float(TG.fga.var() / TG.fga.mean()), 3), "pa_rho": round(float(T.pa.corr(T.otd)), 3),
+            "ya_pa": round(float(T.pa.corr(T.oyds)), 3), "ev": ev, "seasons": sorted(int(y) for y in st),
+            "note": "fitted on box scores (dist/fit_dist.py fit_kdst); see its docstring"}
 
 
 def load_params(path=None):
@@ -486,6 +507,6 @@ if __name__ == "__main__":
                            "all": {"crps": round(rep_all["ppr"]["crps"], 3), "prob_error": round(rep_all["ppr"]["rel_err"], 3),
                                    "corr": rep_all["corr"]}}
             Pf["pplay"] = fit_pplay() or P.get("pplay", PPLAY_DEFAULT)
-            Pf["kdst"] = fit_kdst()
+            Pf["kdst"] = fit_kdst() or P.get("kdst")
             json.dump(Pf, open(DIST_PATH, "w"), indent=1)
             print("wrote", DIST_PATH)

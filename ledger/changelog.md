@@ -69,3 +69,35 @@ best injury news right before Thursday night and Sunday games.
   plus one-time runs for this season's other game days (Wed Nov 25, Thanksgiving daytime, Fri Nov 27, Sat Dec 19,
   Christmas); `weekly.md` step 10b creates any that are missing (flexed Saturday games, later seasons). On Oct 17 the
   Sunday task was also fired once as a Saturday catch-up (`late-sat`) to publish the new page.
+
+## 2026-10-19 — added (user request): kickers and team defenses; offense projections unchanged
+
+Asked for by the user: kickers and D/ST in the model. Notes in `docs/kdst.md`.
+- Model (`pipeline/kdst.py`, one implementation for the builder, the backtest and grading): per team-week expected
+  stat lines from the Vegas lines and shrunk team/kicker/defense histories (kicker: PAT and field-goal volume on the
+  implied total and spread, distance mix and make rates per distance; D/ST: sacks/INT/fumble recoveries on the
+  opponent's implied total and spread with both sides' factors, return TDs, blocked kicks, defensive TDs from
+  takeaways, points-allowed tier chances from the empirical spread around the line, yards-allowed tiers). Backtest
+  2024-26 (2,163 player-games, ESPN standard): D/ST miss 4.62 vs 5.10 for each defense's season average, kickers
+  3.76 vs 3.90 (3.81 league average).
+- Builder (db v7): 32 D/ST (`DST-<team>`, ESPN id −16000 − team id) and each team's kicker, `kw` weekly lines,
+  `s`/`f`/`s25`/`s24`, FantasyPros ROS / weekly / overall / preseason ranks and roster % (defenses matched by team),
+  `DB.kdst`. Bug fix found on the way: the roster came from the newest weekly-roster file's week only, and teams on
+  bye have no rows that week, so every player on a team on bye was dropped (the Oct 13 page had no CAR or KC
+  players; Oct 18's no CIN, DET, MIA, MIN). Each team's newest roster week is used now. Every other player's `m`,
+  `a`, `s`, `f`, `sh`, `mx`, `ij` identical on the Oct 19 inputs; only the bye teams' "other" buckets change.
+- Engine and page: K and D/ST lineup slots (default 1 each; never flex or superflex), league scoring for both
+  (ESPN import reads the league's rules), trade value from the QB/TE rank ladder (near zero: the overall rankings
+  list few kickers and defenses), left out of the trade finder, start/sit simulation (`simKd`: PATs follow the
+  offense's simulated TDs, points and yards allowed follow the opposing offense; spreads and links fitted on
+  2022-25 box scores, `params/dist.json` kdst), K/D-ST breakdowns, League-tab scoring and slots, Method section 1b.
+  Saved leagues get K and D/ST slots and ESPN standard scoring until re-imported; ESPN imports kept as slotsK/slotsDST
+  migrate.
+- Scorecard: kickers and defenses frozen and graded (ESPN standard) from the Week 7 freeze on, in their own section;
+  headline metrics and goals stay QB/RB/WR/TE.
+- Improvement loop: twelve K/DST settings (`params.json`, `"eval": "kdst"`, at the values a sweep on the backtest
+  chose) tested on `backtest/kdst_backtest.py` with the same gate, up to 3 a run; still at most one adopted change a
+  week. Offense neutral check OK (13,701 player-weeks, max difference 0.00005); K/DST champion saved
+  (`data/backtest/kdst_champion.*`).
+- Tests: 16 (new: engine K/DST behaviour on a fixed build `tests/fixtures/db-kdst-w06.json`, builder output, the
+  K/DST replay vs naive references).

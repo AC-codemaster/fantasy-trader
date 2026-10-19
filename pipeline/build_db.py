@@ -46,6 +46,9 @@ import sys
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import kdst  # noqa: E402  kickers and team defenses (shared with the backtest and the scorecard)
+
 POS = ["QB", "RB", "WR", "TE"]
 SEASON = 2026
 
@@ -141,9 +144,10 @@ for tm in teams:
 week_dates = {int(w): str(d) for w, d in g.groupby("week").gameday.min().items()}
 
 # ---------------- stats ----------------
-frames = {}
+frames, RAW = {}, {}
 for key, f in (("24", "s24.csv"), ("25", "s25.csv"), ("26", "s26.csv")):
     d = pd.read_csv(f, low_memory=False)
+    RAW[2000 + int(key)] = d          # every position: kickers and team defenses come from here (pipeline/kdst.py)
     d = d[(d.season_type == "REG") & d.position.isin(POS)].copy()
     d["fl"] = d[["sack_fumbles_lost", "rushing_fumbles_lost", "receiving_fumbles_lost"]].fillna(0).sum(axis=1)
     d["two"] = d[["passing_2pt_conversions", "rushing_2pt_conversions", "receiving_2pt_conversions"]].fillna(0).sum(axis=1)
@@ -201,20 +205,21 @@ fp2g = idmap.dropna(subset=["fantasypros_id", "gsis_id"]).drop_duplicates("fanta
 g2espn = idmap.dropna(subset=["gsis_id", "espn_id"]).drop_duplicates("gsis_id").set_index("gsis_id").espn_id.to_dict()
 
 ecr = pd.read_csv("db_fpecr_latest.csv", low_memory=False)
-ros = ecr[ecr.page_type.isin(["redraft-qb", "redraft-rb", "redraft-wr", "redraft-te"])].copy()
-ROS_DATE = str(ros.scrape_date.max())
+ros = ecr[ecr.page_type.isin(["redraft-qb", "redraft-rb", "redraft-wr", "redraft-te", "redraft-k", "redraft-dst"])].copy()
+ROS_DATE = str(ros[ros.pos.isin(POS)].scrape_date.max())
 ros["gsis"] = ros.id.map(fp2g)
 ros["prank"] = ros.groupby("page_type").ecr.rank(method="first")
 ros_by = ros.dropna(subset=["gsis"]).drop_duplicates("gsis").set_index("gsis")
 ROS_N = {k: int(v) for k, v in ros.groupby("pos").size().items()}
-# cross-positional price: rest-of-season PPR overall consensus (how the market ranks a QB against an RB)
-ovr = ecr[(ecr.page_type == "redraft-overall") & ecr.pos.isin(POS)].copy()
+# cross-positional price: rest-of-season PPR overall consensus (how the market ranks a QB against an RB; it
+# lists the top kickers and defenses too, far down)
+ovr = ecr[(ecr.page_type == "redraft-overall") & ecr.pos.isin(POS + ["K", "DST"])].copy()
 ovr["gsis"] = ovr.id.map(fp2g)
 ovr_by = ovr.dropna(subset=["gsis"]).drop_duplicates("gsis").set_index("gsis").ecr.to_dict()
 
 pre = pd.read_csv("fp_preseason.csv", low_memory=False)
 PRE_DATE = str(pre.scrape_date.max())
-pre = pre[pre.pos.isin(POS)].copy()
+pre = pre[pre.pos.isin(POS + ["K", "DST"])].copy()
 pre["gsis"] = pre.id.map(fp2g)
 pre["orank"] = pre.ecr.rank(method="first")
 pre["prank"] = pre.groupby("pos").ecr.rank(method="first")
@@ -225,6 +230,18 @@ WK_DATE = str(wk.scrape_date.max())
 wk["gsis"] = wk.fantasypros_id.map(fp2g)
 own_by = wk.dropna(subset=["gsis", "player_owned_avg"]).drop_duplicates("gsis").set_index("gsis").player_owned_avg.to_dict()
 
+# Team defenses have no player id at FantasyPros: they're matched by team (FantasyPros writes JAC and LAR).
+FP_TEAM = {"JAC": "JAX", "LAR": "LA", "WSH": "WAS"}
+DST_ID = lambda team: "DST-" + team  # noqa: E731
+for _d in (ros, ovr, pre, wk):
+    _m = _d.pos == "DST"
+    if _m.any():
+        _d.loc[_m, "gsis"] = _d.loc[_m, "team"].map(lambda t: DST_ID(FP_TEAM.get(str(t), str(t))))
+ros_by = ros.dropna(subset=["gsis"]).drop_duplicates("gsis").set_index("gsis")
+ovr_by = ovr.dropna(subset=["gsis"]).drop_duplicates("gsis").set_index("gsis").ecr.to_dict()
+pre_by = pre.dropna(subset=["gsis"]).drop_duplicates("gsis").set_index("gsis")
+own_by = wk.dropna(subset=["gsis", "player_owned_avg"]).drop_duplicates("gsis").set_index("gsis").player_owned_avg.to_dict()
+
 
 def week_of_day(day):
     ws = [w_ for w_, d_ in week_dates.items() if d_ <= day]
@@ -233,7 +250,7 @@ def week_of_day(day):
 
 # FantasyPros weekly rankings: position rank for the week they were made for (kept only if that's
 # the current week). Backtested: blending them into this week's projection at 50% cut misses.
-wkr = wk[wk.pos.isin(POS)].dropna(subset=["gsis", "ecr"]).copy()
+wkr = wk[wk.pos.isin(POS + ["K", "DST"])].dropna(subset=["gsis", "ecr"]).copy()
 wkr["day"] = pd.to_datetime(wkr.player_game_kickoff_ts, unit="s", errors="coerce").dt.tz_localize("UTC").dt.tz_convert("America/New_York").dt.strftime("%Y-%m-%d")
 wk_weeks = wkr.day.dropna().map(week_of_day).dropna()
 EW_WEEK = int(wk_weeks.mode().iloc[0]) if len(wk_weeks) else None
@@ -253,13 +270,17 @@ if os.path.exists("snaps26.csv"):
 
 # ---------------- rosters and injury timelines ----------------
 rw = pd.read_csv("r26.csv", low_memory=False)
-r = rw[rw.week == rw.week.max()]
-r = r[r.position.isin(POS) & ~r.status.isin(["CUT", "RET"])]
-r = r.drop_duplicates("gsis_id", keep="last").set_index("gsis_id")
+# Each team's newest weekly roster. A team on bye has no rows in the week it sits out, so taking the file's last
+# week alone dropped every player on the teams on bye (the Oct 13 page had no CAR or KC players, Oct 18 no CIN,
+# DET, MIA or MIN). A player who changed teams since keeps his newest row.
+_tw = rw.groupby("team").week.transform("max")
+ROSTER = rw[rw.week == _tw].sort_values("week").drop_duplicates("gsis_id", keep="last")
+r = ROSTER[ROSTER.position.isin(POS) & ~ROSTER.status.isin(["CUT", "RET"])]
+r = r.set_index("gsis_id")
 
 # first week of each player's current reserve stint (IR, PUP, NFI...)
 res_start = {}
-for pid, h in rw[rw.position.isin(POS)].sort_values("week").groupby("gsis_id"):
+for pid, h in rw[rw.position.isin(POS + ["K"])].sort_values("week").groupby("gsis_id"):
     st = list(zip(h.week.astype(int), h.status))
     if not st or st[-1][1] != "RES":
         continue
@@ -466,7 +487,7 @@ PRIOR_GAMES_MOVED = prm("prior_moved", 1.5)    # ...or 1.5 if he changed teams
 TEAM_PRIOR_GAMES = prm("team_prior", 3.0)     # team volume shrinks toward league average by 3 games
 DECAY = prm("decay", 0.9)                # each older week counts 10% less in this season's share fit (tuned)
 
-latest = rw[rw.week == rw.week.max()]
+latest = ROSTER
 cur_team = latest.drop_duplicates("gsis_id", keep="last").set_index("gsis_id")
 status_by = {(row.gsis_id, int(row.week)): (row.team, row.status) for row in rw.itertuples()}
 
@@ -640,7 +661,7 @@ qb_depth = {}
 depth_rank = {}
 if os.path.exists("dc26.csv"):
     dc = pd.read_csv("dc26.csv", low_memory=False, usecols=["dt", "team", "gsis_id", "pos_abb", "pos_rank"])
-    dc = dc[dc.pos_abb.isin(["QB", "RB", "WR", "TE"])]
+    dc = dc[dc.pos_abb.isin(["QB", "RB", "WR", "TE", "PK"])]
     dc = dc[dc.dt == dc.dt.max()]
     depth_rank = {(r_.team, r_.gsis_id): int(r_.pos_rank) for r_ in dc.itertuples() if isinstance(r_.gsis_id, str)}
     qbs = set(dc[dc.pos_abb == "QB"].gsis_id)
@@ -784,10 +805,11 @@ def proj_implied(tm_, opp_, home_):
     return _b[0] + _b[1] * home_ + _b[2 + _tix[tm_]] + _b[2 + len(teams) + _tix[opp_]]
 
 
-ENV = {}
+ENV, USUAL = {}, {}
 for tm in teams:
     prev = [LINES[(tm, w)][0] for w in range(1, CUR_WEEK) if (tm, w) in LINES]
     usual = (sum(prev) + 3 * lg_imp) / (len(prev) + 3)
+    USUAL[tm] = usual
     ENV[tm] = {}
     for r_ in g[((g.home_team == tm) | (g.away_team == tm)) & (g.week >= CUR_WEEK)].itertuples():
         w = int(r_.week)
@@ -1011,15 +1033,145 @@ for _r in g[g.week == CUR_WEEK].itertuples():
         _k = None
     KICK_WK[_r.home_team] = KICK_WK[_r.away_team] = _k
 
+# ---------------- kickers and team defenses (pipeline/kdst.py) ----------------
+# Projected from the Vegas lines and each team's and kicker's history: one expected stat line per remaining week
+# ("kw", in DB.kdst.kComp / dComp order). The page scores them with each league's own settings.
+KP = {k_: prm(k_, v_) for k_, v_ in kdst.DEFAULTS.items()}
+KD_TG, KD_KG = kdst.history(RAW, pd.read_csv("games.csv", low_memory=False))
+_th, _kh = kdst.cut(KD_TG, KD_KG, SEASON, CUR_WEEK)
+KD_L = kdst.league(_th, _kh)
+KD_D, KD_K = kdst.profiles(_th, _kh, KD_L, SEASON, KP)
+ESPN_TEAM = {"ATL": 1, "BUF": 2, "CHI": 3, "CIN": 4, "CLE": 5, "DAL": 6, "DEN": 7, "DET": 8, "GB": 9, "TEN": 10, "IND": 11, "KC": 12,
+             "LV": 13, "LA": 14, "MIA": 15, "MIN": 16, "NE": 17, "NO": 18, "NYG": 19, "NYJ": 20, "PHI": 21, "ARI": 22, "PIT": 23,
+             "LAC": 24, "SF": 25, "SEA": 26, "TB": 27, "WAS": 28, "CAR": 29, "JAX": 30, "BAL": 33, "HOU": 34}
+TEAM_NAME = {"ARI": "Cardinals", "ATL": "Falcons", "BAL": "Ravens", "BUF": "Bills", "CAR": "Panthers", "CHI": "Bears", "CIN": "Bengals",
+             "CLE": "Browns", "DAL": "Cowboys", "DEN": "Broncos", "DET": "Lions", "GB": "Packers", "HOU": "Texans", "IND": "Colts",
+             "JAX": "Jaguars", "KC": "Chiefs", "LA": "Rams", "LAC": "Chargers", "LV": "Raiders", "MIA": "Dolphins", "MIN": "Vikings",
+             "NE": "Patriots", "NO": "Saints", "NYG": "Giants", "NYJ": "Jets", "PHI": "Eagles", "PIT": "Steelers", "SEA": "Seahawks",
+             "SF": "49ers", "TB": "Buccaneers", "TEN": "Titans", "WAS": "Commanders"}
+SCHED = {}
+for _r in g[g.week >= CUR_WEEK].itertuples():
+    SCHED[(_r.home_team, int(_r.week))], SCHED[(_r.away_team, int(_r.week))] = _r.away_team, _r.home_team
+
+
+def eff_line(tm, w):
+    """(implied total, spread) for team tm in week w: the Vegas line when there is one, else the market-rating
+    projection, shrunk the way the offense's game environment is (env x and spread are already shrunk)."""
+    e = ENV.get(tm, {}).get(str(w))
+    return (USUAL[tm] * (1 + e[0]), e[1]) if e else (None, 0.0)
+
+
+def kd_round(v, kind):
+    if kind == "K":
+        return [round(float(x), 3) for x in v]
+    return [round(float(x), 3) for x in v[:7]] + [round(float(v[7]), 1), round(float(v[8]), 1)] + [round(float(x), 4) for x in v[9:]]
+
+
+def kd_mean(df, cols, kind):
+    return kd_round(df[cols].astype(float).mean().values, kind) if len(df) else None
+
+
+def kd_crowd(rec, key):
+    """Expert, draft, roster and weekly-rank signals (FantasyPros) for a kicker or defense."""
+    if key in ros_by.index:
+        rr = ros_by.loc[key]
+        rec["er"] = int(rr.prank)
+        rec["es"] = round(float(rr.sd), 2) if pd.notna(rr.sd) else None
+    if key in ovr_by and pd.notna(ovr_by[key]):
+        rec["eo"] = round(float(ovr_by[key]), 1)
+    if key in pre_by.index:
+        rec["dr"], rec["dp"] = int(pre_by.loc[key].orank), int(pre_by.loc[key].prank)
+    if key in own_by:
+        rec["own"] = round(float(own_by[key]), 1)
+    if key in ew_by:
+        rec["ew"] = int(ew_by[key])
+
+
+def kd_weeks(tm, fn):
+    out = {}
+    for w in range(CUR_WEEK, LAST_WEEK + 1):
+        opp = SCHED.get((tm, w))
+        if opp:
+            out[str(w)] = fn(w, opp)
+    return out
+
+
+KD_AD, KD_AK = kdst.actual_dst(KD_TG), kdst.actual_k(KD_KG)
+kd_players = []
+for tm in teams:
+    h = KD_AD[KD_AD.team == tm]
+    h26 = h[h.season == SEASON].sort_values("week")
+
+    def dst_week(w, opp, tm=tm):
+        imp_o, _ = eff_line(opp, w)
+        _, sp = eff_line(tm, w)
+        return kd_round(kdst.project_dst(KD_L, KD_D, tm, opp, imp_o, sp, KP), "DST")
+    rec = {"id": "DST-" + tm, "espn": -16000 - ESPN_TEAM[tm] if tm in ESPN_TEAM else None, "n": f"{TEAM_NAME.get(tm, tm)} D/ST",
+           "p": "DST", "t": tm, "age": None, "g26": int(len(h26)), "g25": int((h.season == SEASON - 1).sum()), "g24": int((h.season == SEASON - 2).sum()),
+           "inj": "", "s": kd_mean(h26, kdst.D_COMP, "DST") or [0.0] * len(kdst.D_COMP),
+           "f": kd_mean(h26.tail(2), kdst.D_COMP, "DST") or [0.0] * len(kdst.D_COMP), "kw": kd_weeks(tm, dst_week)}
+    for yy, key in ((SEASON - 1, "s25"), (SEASON - 2, "s24")):
+        v = kd_mean(h[h.season == yy], kdst.D_COMP, "DST")
+        if v:
+            rec[key] = v
+    if len(h26):
+        rec["lg"] = int(h26.week.max())
+    kd_crowd(rec, rec["id"])
+    kd_players.append(rec)
+
+# kickers: each team's kicker (depth chart first, else whoever kicked for it most recently), plus a kicker on a
+# reserve list who kicked for it this season (his timeline says when he's back; the active one kicks meanwhile)
+_kr = ROSTER[(ROSTER.position == "K") & ROSTER.status.isin(["ACT", "INA", "RES", "EXE"])].set_index("gsis_id")
+_last_k = KD_KG[KD_KG.season == SEASON].sort_values("week").groupby("team").id.last().to_dict()
+_kicked = KD_KG[KD_KG.season == SEASON].groupby(["team", "id"]).size()
+for tm in teams:
+    ks = _kr[_kr.team == tm]
+    act = [pid for pid in ks.index if ks.loc[pid].status in ("ACT", "INA")]
+    first = [pid for pid in act if depth_rank.get((tm, pid)) == 1]
+    pick = first[:1] or [pid for pid in act if pid == _last_k.get(tm)][:1] or act[:1]
+    pick += [pid for pid in ks.index if ks.loc[pid].status == "RES" and (tm, pid) in _kicked.index and pid not in pick]
+    for pid in pick:
+        ro = ks.loc[pid]
+        h = KD_AK[KD_AK.id == pid]
+        h26 = h[h.season == SEASON].sort_values("week")
+
+        def k_week(w, opp, tm=tm, pid=pid):
+            imp, sp = eff_line(tm, w)
+            return kd_round(kdst.project_k(KD_L, KD_D, KD_K, pid, tm, imp, sp), "K")
+        espn = ro.espn_id if pd.notna(ro.espn_id) else g2espn.get(pid)
+        rec = {"id": pid, "espn": int(float(espn)) if espn is not None and pd.notna(espn) else None, "n": ro.full_name, "p": "K", "t": tm,
+               "age": ages.get(pid), "g26": int(len(h26)), "g25": int((h.season == SEASON - 1).sum()), "g24": int((h.season == SEASON - 2).sum()),
+               "s": kd_mean(h26, kdst.K_COMP, "K") or [0.0] * len(kdst.K_COMP), "f": kd_mean(h26.tail(2), kdst.K_COMP, "K") or [0.0] * len(kdst.K_COMP),
+               "kw": kd_weeks(tm, k_week)}
+        for yy, key in ((SEASON - 1, "s25"), (SEASON - 2, "s24")):
+            v = kd_mean(h[h.season == yy], kdst.K_COMP, "K")
+            if v:
+                rec[key] = v
+        ij = timeline(pid, ro)
+        rec["inj"] = ij["st"] if ij else ""
+        if ij:
+            rec["ij"] = ij
+        if len(h26):
+            rec["lg"] = int(h26.week.max())
+        if depth_rank.get((tm, pid)):
+            rec["dc"] = depth_rank[(tm, pid)]
+        kd_crowd(rec, pid)
+        rec.update(week_status(pid, ro))
+        kd_players.append(rec)
+players += kd_players
+KDST_DB = {"v": 1, "kComp": kdst.K_COMP, "dComp": kdst.D_COMP, "paEdges": kdst.PA_EDGES, "yaEdges": kdst.YA_EDGES[1:],
+           "sim": kdst.sim_params(KD_L), "params": KP}
+
 matched_cbs = sum(1 for p in players if p.get("ij") and p["ij"]["src"] == "CBS Sports")
 out = {
-    "v": 6,
+    "v": 7,
     "asOf": f"{SEASON} Week {DONE_WEEK} stats (through {last_game_day})",
     "builtAt": pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
     "season": SEASON, "curWeek": CUR_WEEK, "doneWeek": DONE_WEEK, "lastWeek": LAST_WEEK, "rosWeek": ROS_WEEK,
     "sources": {"ros": ROS_DATE, "pre": PRE_DATE, "own": WK_DATE, "inj": NEWS_DATE},
     "params": {"version": PARAMS_VERSION, "values": PRM, "annual": ANNUAL.get("version")}, "ewWeek": EW_WEEK, "rosN": ROS_N, "byes": byes, "weekDates": week_dates, "teams": team_out, "faabPool": FAAB_POOL,
-    "opp": OPP_WK, "kick": KICK_WK, "gameday": {"at": GAMEDAY_AT, "teams": sorted(GAMEDAY)} if GAMEDAY else None, "players": players,
+    "opp": OPP_WK, "kick": KICK_WK, "gameday": {"at": GAMEDAY_AT, "teams": sorted(GAMEDAY)} if GAMEDAY else None, "kdst": KDST_DB,
+    "players": players,
 }
 json.dump(out, open("db.json", "w"), separators=(",", ":"))
 print(len(players), "players;", len(json.dumps(out)) // 1024, "KB; current week", CUR_WEEK, "; timelines from CBS:", matched_cbs)
@@ -1027,6 +1179,11 @@ print("sources", out["sources"], "experts' week", ROS_WEEK, "| weekly expert ran
 _envs = sorted(((v[str(CUR_WEEK)][0], tm) for tm, v in ENV.items() if str(CUR_WEEK) in v), reverse=True)
 if _envs:
     print(f"week {CUR_WEEK} game environment (implied vs usual):", ", ".join(f"{tm} {x:+.0%}" for x, tm in _envs[:4]), "...", ", ".join(f"{tm} {x:+.0%}" for x, tm in _envs[-4:]))
+_kd = [(kdst.d_points(p["kw"][str(CUR_WEEK)]) if p["p"] == "DST" else kdst.k_points(p["kw"][str(CUR_WEEK)]), p["n"], p["p"])
+       for p in kd_players if str(CUR_WEEK) in p["kw"] and not (p.get("ij") and p["ij"]["thru"] is not None and p["ij"]["thru"] >= CUR_WEEK)]
+print(f"kickers and defenses: {sum(1 for p in kd_players if p['p'] == 'K')} kickers, {sum(1 for p in kd_players if p['p'] == 'DST')} defenses; "
+      f"week {CUR_WEEK} (standard scoring) D/ST:", ", ".join([f"{n} {v:.1f}" for v, n, q in sorted(_kd, reverse=True) if q == "DST"][:4]),
+      "| K:", ", ".join([f"{n} {v:.1f}" for v, n, q in sorted(_kd, reverse=True) if q == "K"][:4]))
 print("FAAB breakout pool (PPR points above startable, league-wide) from week:", {w: FAAB_POOL["ppr"][w] for w in list(FAAB_POOL["ppr"])[2:10]} if FAAB_POOL else None)
 unmatched = [k for k in cbs if not any((p["t"], p["p"]) + name_key(p["n"]) == k for p in players)]
 print("CBS rows not matched to a player in the data:", len(unmatched), unmatched)

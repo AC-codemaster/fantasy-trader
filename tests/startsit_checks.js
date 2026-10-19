@@ -55,7 +55,9 @@ out.corr = { qbwr: avg("qbwr"), rbrb: avg("rbrb"), n: cs.length };
 // --- lineups
 t0 = Date.now();
 const ss = E.startSit(ctx, mine, opp, { sim });
-out.startSit = { ms: Date.now() - t0, best: ss.best.p, proj: ss.proj.p, legal: !!E.fitSlots(E.lineupSlotList(L.settings), ss.best.ids.map((id) => DB.players.find((p) => p.id === id).p)), n: ss.best.ids.length, slots: E.lineupSlotList(L.settings).length };
+// slots the data can fill (data built before kickers and defenses were modeled leaves their slots out)
+const have = new Set(DB.players.map((p) => p.p));
+out.startSit = { ms: Date.now() - t0, best: ss.best.p, proj: ss.proj.p, legal: !!E.fitSlots(E.lineupSlotList(L.settings, have), ss.best.ids.map((id) => DB.players.find((p) => p.id === id).p)), n: ss.best.ids.length, slots: E.lineupSlotList(L.settings, have).length };
 // --- need calculator
 const flex = mine.roster.filter((id) => { const p = DB.players.find((q) => q.id === id); return p && ["RB", "WR", "TE"].includes(p.p) && sim.pts.has(id); }).slice(0, 3);
 const lo = E.needCalc(ctx, flex, { need: 5, sim }), hi = E.needCalc(ctx, flex, { need: 20, sim });

@@ -49,11 +49,16 @@ from ftlib import engine_source, load_params_file, values  # noqa: E402
 
 RUNNER = os.path.join(ROOT, "tools", "engine_runner.js")
 DATA = os.path.join(ROOT, "data")
-POS = ["QB", "RB", "WR", "TE"]
+sys.path.insert(0, os.path.join(ROOT, "pipeline"))
+import kdst  # noqa: E402  kickers and team defenses: actual points
+
+POS = ["QB", "RB", "WR", "TE"]   # the headline metrics and the goals (continuous with the weeks graded before Oct 20, 2026)
+KD = ["K", "DST"]                # kickers and team defenses, graded in their own section (ESPN standard scoring)
+FP_TEAM = {"JAC": "JAX", "LAR": "LA", "WSH": "WAS"}
 COMP = ["py", "ptd", "int", "ry", "rtd", "rec", "recy", "rectd", "fl", "two"]
 SCORE = {"ppr": [0.04, 4, -2, 0.1, 6, 1.0, 0.1, 6, -2, 2], "half": [0.04, 4, -2, 0.1, 6, 0.5, 0.1, 6, -2, 2],
          "std": [0.04, 4, -2, 0.1, 6, 0.0, 0.1, 6, -2, 2]}
-REL_N = {"QB": 24, "RB": 48, "WR": 60, "TE": 24}
+REL_N = {"QB": 24, "RB": 48, "WR": 60, "TE": 24, "K": 14, "DST": 14}
 CLOSE = 12           # start/sit calls: same-position pairs within this many consensus ranks of each other
 DP_REPO = "https://github.com/dynastyprocess/data"
 DP_HIST = "dp-history"
@@ -184,9 +189,12 @@ def fp_ids():
 
 
 def fp_frame(df, fp2g, starts):
-    """FantasyPros weekly rows for QB/RB/WR/TE with gsis id, kickoff and the week they're for."""
-    d = df[df.pos.isin(POS)].copy()
+    """FantasyPros weekly rows for QB/RB/WR/TE/K/DST with our id (gsis; DST-<team> for defenses), kickoff and week."""
+    d = df[df.pos.isin(POS + KD)].copy()
     d["gsis"] = pd.to_numeric(d.fantasypros_id, errors="coerce").map(fp2g)
+    dst = d.pos == "DST"
+    if dst.any():
+        d.loc[dst, "gsis"] = d.loc[dst, "team"].map(lambda t: "DST-" + FP_TEAM.get(str(t), str(t)))
     d["kick"] = pd.to_numeric(d.player_game_kickoff_ts, errors="coerce")
     day = pd.to_datetime(d.kick, unit="s", utc=True).dt.tz_convert("America/New_York").dt.strftime("%Y-%m-%d")
     d["week"] = day.map(lambda x: week_of_day(starts, x) if isinstance(x, str) else None)
@@ -265,9 +273,10 @@ def freeze(a):
     if meta["excludedStarted"]:
         print("  left out (game already started):", ", ".join(meta["excludedStarted"]))
     print(f"  FantasyPros at freeze: {P.fp_ecr.notna().sum()} players matched (scrape {fp_date})")
-    for pos in POS:
+    for pos in POS + KD:
         top = av[av.pos == pos].nlargest(3, "page_ppr")
-        print(f"  {pos}: " + ", ".join(f"{r.name} {r.page_ppr:.1f}" for r in top.itertuples()))
+        if len(top):
+            print(f"  {pos}: " + ", ".join(f"{r.name} {r.page_ppr:.1f}" for r in top.itertuples()))
 
 
 def load_freeze(path):
@@ -366,6 +375,21 @@ def season_snaps(season):
     return _SNAPS[season]
 
 
+_KD = {}
+
+
+def kd_actuals(season, week):
+    """Kickers' and defenses' standard points in a week: {id: points} (kickers by player id, defenses DST-<team>);
+    a kicker counts as playing when he tried a kick, a defense when its game was played."""
+    if season not in _KD:
+        _KD[season] = kdst.history({season: season_stats(season)}, pd.read_csv("games.csv", low_memory=False))
+    TG, KG = _KD[season]
+    tg, kg = TG[TG.week == week], KG[KG.week == week]
+    out = {"DST-" + t: kdst.d_points(v) for t, v in zip(tg.team, kdst.actual_dst(tg)[kdst.D_COMP].values.astype(float))}
+    out.update({i: kdst.k_points(v) for i, v in zip(kg.id, kdst.actual_k(kg)[kdst.K_COMP].values.astype(float))})
+    return out
+
+
 def actuals(season, week):
     s = season_stats(season)
     s = s[s.week == week]
@@ -378,12 +402,25 @@ def actuals(season, week):
     played = set(A.index)
     sn = season_snaps(season)
     played |= set(sn[sn.week == week].gsis)
+    # kickers and defenses: their points (ESPN standard) in a_kd, on top of zero offensive components
+    kd = pd.Series(kd_actuals(season, week), dtype=float)
+    new = kd.index.difference(A.index)
+    if len(new):
+        E = pd.DataFrame(0.0, index=new, columns=[c for c in A.columns if c != "a_team"])
+        E["a_team"] = [i[4:] if str(i).startswith("DST-") else None for i in new]
+        A = pd.concat([A, E])
+    A["a_kd"] = kd.reindex(A.index).fillna(0.0)
+    played |= set(kd.index)
     return A, played, set(s.team)
 
 
 def comp_pts(df, prefix, kind="ppr"):
+    """Fantasy points from components (receptions per `kind`); kickers' and defenses' points (a_kd) count as is."""
     w = SCORE[kind]
-    return sum(df[prefix + c].fillna(0) * w[i] for i, c in enumerate(COMP))
+    pts = sum(df[prefix + c].fillna(0) * w[i] for i, c in enumerate(COMP))
+    if prefix == "a_" and "a_kd" in df:
+        pts = pts + df["a_kd"].fillna(0)
+    return pts
 
 
 # ----------------------------------------------------------------------------- grading one week
@@ -397,7 +434,7 @@ def grade_week(path, games, hist):
     F["game_done"] = F.team.isin(done).astype(int)
     F = F.join(A, on="id")
     F["played"] = F.id.isin(played).astype(int) * F.game_done
-    for c in ["a_" + c for c in COMP] + ["a_car", "a_tgt", "a_att"]:
+    for c in ["a_" + c for c in COMP] + ["a_car", "a_tgt", "a_att", "a_kd"]:
         F[c] = F[c].fillna(0.0)
     for k in SCORE:
         F[f"act_{k}"] = comp_pts(F, "a_", k)
@@ -626,6 +663,9 @@ PARAM_HINTS = {
     "WR opportunities": ["team_prior", "decay", "prior_games"],
     "TE opportunities": ["team_prior", "decay", "prior_games"],
     "expert weights": ["expertWeight", "weeklyExpert"],
+    # kickers and defenses (backtest/kdst_backtest.py, params eval "kdst")
+    "K level": ["k_pat", "k_fg", "k_kvol", "k_pvol", "w_kprev"],
+    "DST level": ["k_dst", "k_off", "k_ya", "pa_scale", "w_dprev"],
 }
 
 
@@ -711,6 +751,22 @@ def diagnostics(R):
     return out
 
 
+def kd_diagnostics(R):
+    """Kickers and defenses: lean of actual − projection (hindsight basis), flagged like the offense's positions."""
+    R = R.copy()
+    R["basis"] = R.hind_ppr.where(R.hind_ppr.notna(), R.page_ppr)
+    out = []
+    for pos in KD:
+        d = R[R.pos == pos]
+        if not len(d):
+            continue
+        row = group_row(pos, d, "basis")
+        row["flag"] = bool(row["resid"] is not None and row["se"] and abs(row["resid"]) >= 0.75 and abs(row["resid"]) / row["se"] >= 2.5 and len(d) >= 60)
+        row["key"] = f"{pos} level"
+        out.append(row)
+    return out
+
+
 def expert_sweep(R):
     """MAE of this week's projection for every pair of expert weights, rebuilt exactly from the frozen parts:
     page = max(0, model + corr·w/w0 + we·(weekly expert − model)). Tuesday information, so it's fair to
@@ -766,7 +822,7 @@ def ros_eval(games, graded_weeks):
             A, played, _ = actuals(S, G)
             act = comp_pts(A, "a_")
             for pl in ros["players"]:
-                if i >= len(pl["page_wk"]) or not pl["avail_wk"][i] or pl["id"] not in played:
+                if pl["pos"] not in POS or i >= len(pl["page_wk"]) or not pl["avail_wk"][i] or pl["id"] not in played:
                     continue
                 rows.append({"season": S, "week": W, "target": G, "h": G - W, "id": pl["id"], "pos": pl["pos"],
                              "team": pl["team"], "er": pl["er"], "proj": pl["page_wk"][i], "model": pl["model_wk"][i],
@@ -843,6 +899,10 @@ def candidates(diag, cum, sweep, weeks_final):
         if r["oppSe"] and abs(r["oppBias"]) >= 0.75 and abs(r["oppBias"]) / r["oppSe"] >= 2.5 and r["n"] >= 60:
             c.append({"area": f"{r['pos']} opportunities", "evidence": f"actual − projected {'attempts' if r['pos'] == 'QB' else 'carries+targets'} {r['oppBias']:+.2f} (±{r['oppSe']:.2f})",
                       "direction": "up" if r["oppBias"] > 0 else "down", "params": PARAM_HINTS[f"{r['pos']} opportunities"]})
+    for r in diag.get("kd", []):
+        if r["flag"]:
+            c.append({"area": r["key"], "evidence": f"actual − projection {r['resid']:+.2f} pts (±{r['se']:.2f}, n={r['n']}); FantasyPros {r.get('fpResid', float('nan')):+.2f}",
+                      "direction": "up" if r["resid"] > 0 else "down", "params": PARAM_HINTS.get(r["key"], [])})
     if sweep and weeks_final >= 3 and sweep.get("se") and sweep["diff"] / sweep["se"] <= -2.0:
         c.append({"area": "expert weights", "evidence": f"expert weight {sweep['best']['expertWeight']:.2f} / weekly {sweep['best']['weeklyExpert']:.2f} would have cut the miss {sweep['current']['mae']:.2f} → {sweep['best']['mae']:.2f} ({sweep['diff']:+.3f} ± {sweep['se']:.3f})",
                   "direction": "toward best", "params": PARAM_HINTS["expert weights"], "target": sweep["best"]})
@@ -906,7 +966,10 @@ def grade(a):
         return
     D = add_sw(D)
     D["rel"] = relevant(D)
-    R = D[D.rel]
+    RA = D[D.rel]
+    # headline and goals: QB/RB/WR/TE (as graded since the start); kickers and defenses get their own section
+    R, DO = RA[RA.pos.isin(POS)], D[D.pos.isin(POS)]
+    RK = RA[RA.pos.isin(KD)]
     weeks = []
     for (S, W), d in R.groupby(["season", "week"]):
         i = dict(infos.get((S, W), {"season": int(S), "week": int(W)}))
@@ -914,18 +977,28 @@ def grade(a):
         i["vsFinal"] = compare(d, "page", "fp_final")
         i["vsEarly"] = compare(d, "page", "fp_early")
         i["vsHind"] = compare(d, "page", "hind")
-        i["nRel"], i["nAll"] = int(len(d)), int(((D.season == S) & (D.week == W)).sum())
+        i["nRel"], i["nAll"] = int(len(d)), int(((DO.season == S) & (DO.week == W)).sum())
+        k = RK[(RK.season == S) & (RK.week == W)]
+        if len(k):
+            i["kd"] = {pos: {s: metrics(k[k.pos == pos], s) for s in ("page", "late", "fp_early", "fp_final")} for pos in KD if (k.pos == pos).any()}
         weeks.append(i)
     nfinal = sum(1 for w in weeks if w.get("status") == "final")
-    cum = {"rel": {s: metrics(R, s) for s in SOURCES}, "all": {s: metrics(D, s) for s in SOURCES},
-           "byPos": {pos: {s: metrics(R[R.pos == pos], s) for s in SOURCES} for pos in POS},
+    cum = {"rel": {s: metrics(R, s) for s in SOURCES}, "all": {s: metrics(DO, s) for s in SOURCES},
+           "byPos": {pos: {s: metrics(RA[RA.pos == pos], s) for s in SOURCES} for pos in POS + KD if (RA.pos == pos).any()},
+           "kd": {pos: {"page_vs_final": compare(RK[RK.pos == pos], "page", "fp_final"), "page_vs_early": compare(RK[RK.pos == pos], "page", "fp_early"),
+                        "late_vs_final": compare(RK[RK.pos == pos], "late", "fp_final"), "weeks": int(RK[RK.pos == pos].sw.nunique())}
+                  for pos in KD if (RK.pos == pos).any()},
            "page_vs_final": compare(R, "page", "fp_final"), "page_vs_early": compare(R, "page", "fp_early"),
            "late_vs_final": compare(R, "late", "fp_final"), "late_vs_page": compare(R, "late", "page"),
            "model_vs_page": compare(R, "model", "page"), "hind_vs_page": compare(R, "hind", "page"),
            "hind_vs_final": compare(R, "hind", "fp_final"), "early_vs_final": compare(R, "fp_early", "fp_final")}
     for k in ("page_vs_final", "page_vs_early", "hind_vs_final", "late_vs_final"):
         cum[k]["verdict"] = {"mae": verdict(cum[k], "mae", True), "rho": verdict(cum[k], "rho", False), "pairs": verdict(cum[k], "pairs", False)}
+    for x in cum["kd"].values():
+        for k in ("page_vs_final", "page_vs_early", "late_vs_final"):
+            x[k]["verdict"] = {"mae": verdict(x[k], "mae", True), "rho": verdict(x[k], "rho", False), "pairs": verdict(x[k], "pairs", False)}
     diag = diagnostics(R)
+    diag["kd"] = kd_diagnostics(RK)
     sweep = expert_sweep(R)
     ros = ros_eval(games, weeks)
     cand = candidates(diag, cum, sweep, nfinal)
@@ -997,8 +1070,10 @@ def pending(paths):
         if st == "final":
             continue
         top = {}
-        for pos in POS:
+        for pos in POS + KD:
             d = F[(F.pos == pos) & (F.avail == 1)].astype({"page_ppr": float}).nlargest(8, "page_ppr")
+            if not len(d):
+                continue
             top[pos] = [{"name": r.name, "team": r.team, "page": round(float(r.page_ppr), 1),
                          "fp": None if r.fp_pts is None or pd.isna(r.fp_pts) else round(float(r.fp_pts), 1)} for r in d.itertuples()]
         out.append({"season": meta["season"], "week": meta["week"], "frozenAt": meta.get("frozenAt"), "n": int(len(F)),
@@ -1052,6 +1127,15 @@ def markdown(o):
     for s in SOURCES:
         m = c["rel"][s]
         L.append(f"| {o['labels'][s]} | {m.get('n', 0)} | {fmt(m.get('mae'))} | {fmt(m.get('bias'))} | {fmt(m.get('rmse'))} | {fmt(m.get('r'))} | {fmt(m.get('rho'), 3)} | {fmt(m.get('pairs'), 1)} |")
+    if c.get("kd"):
+        L += ["", "## Kickers and defenses (ESPN standard scoring; not in the numbers above)", "",
+              "| Position | Weeks | n | Our miss | FP Tue | FP final | Rank corr ours vs FP final | Start/sit ours vs FP final |", "|---|---|---|---|---|---|---|---|"]
+        for pos, x in c["kd"].items():
+            bp = c["byPos"].get(pos, {})
+            pf = x["page_vs_final"].get("pairs") or {}
+            L.append(f"| {'D/ST' if pos == 'DST' else pos} | {x['weeks']} | {bp.get('page', {}).get('n', 0)} | {fmt(bp.get('page', {}).get('mae'))} | "
+                     f"{fmt(bp.get('fp_early', {}).get('mae'))} | {fmt(bp.get('fp_final', {}).get('mae'))} | {fmt(bp.get('page', {}).get('rho'), 3)} vs "
+                     f"{fmt(bp.get('fp_final', {}).get('rho'), 3)} | {fmt(pf.get('a'), 1)} vs {fmt(pf.get('b'), 1)} |")
     L += ["", "## By week", "", "| Season-week | Status | Ours | Hindsight | FP Tue | FP final | Start/sit ours vs FP final |", "|---|---|---|---|---|---|---|"]
     for w in o["weeks"]:
         M = w["metrics"]
@@ -1071,7 +1155,7 @@ def markdown(o):
               f"Current {sw['current']['expertWeight']:.2f} / {sw['current']['weeklyExpert']:.2f}: miss {sw['current']['mae']:.3f}. Best {sw['best']['expertWeight']:.2f} / {sw['best']['weeklyExpert']:.2f}: {sw['best']['mae']:.3f} ({sw['diff']:+.3f} ± {fmt(sw.get('se'), 3)})."]
     d = o["diagnostics"]
     L += ["", f"## Diagnostics ({d['basis']}; actual − projection, + = projected too low)", ""]
-    for r in d["byPos"] + d["groups"]:
+    for r in d["byPos"] + d.get("kd", []) + d["groups"]:
         L.append(f"- {r['group']}: {fmt(r['resid'])} ± {fmt(r['se'])} (n={r['n']}; our miss {fmt(r.get('maeUs'))} vs FP {fmt(r.get('maeFp'))}){'  ← flag' if r['flag'] else ''}")
     for r in d["volume"]:
         L.append(f"- {r['pos']} opportunities: actual − projected {fmt(r['oppBias'])} ± {fmt(r['oppSe'])}; miss from volume {fmt(r['volMae'])} vs per-play {fmt(r['effMae'])} pts")

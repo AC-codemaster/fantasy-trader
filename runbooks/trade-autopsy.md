@@ -29,7 +29,8 @@ S = the season that just ended.
    When they do (in this session or a new one), save the files and continue.
 5. Run: `python3 ../tools/trade_autopsy.py --espn league.json [--espn week files...] --saved saved_league.json --season <S> --out ../docs/trade-autopsy-<S>.md`.
    Rows marked "(after the trade)" used the first archived week after the trade (no archive at the trade
-   date, e.g. before Week 5 2026); "rollback misses" means transactions were missing, so the rosters at the
+   date, e.g. before Week 5 2026); kickers and defenses are in the data from the Week 7 2026 archive on (Oct 20), so
+   one traded before that shows as unmatched; "rollback misses" means transactions were missing, so the rosters at the
    trade are approximate. Records at the trade date are not in the data, so managers are judged without
    their win/loss mood.
 6. Read the report and add a short "What it says" section at the top of the doc in plain language: did the

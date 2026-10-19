@@ -44,7 +44,8 @@ Teams post inactives 90 minutes before kickoff. From `games.csv`, list this week
   (a catch-up run), skip this step and write no `gameday.json`.
 
 ## 3. Injury reports
-- CBS Sports team injury pages, all 32 teams: exactly step 2 of `runbooks/weekly.md` (→ `cbs_injuries.tsv`).
+- CBS Sports team injury pages, all 32 teams: exactly step 2 of `runbooks/weekly.md` (→ `cbs_injuries.tsv`; kickers
+  included).
   If time is short, do the teams that play after now first.
 - *Optional, only with time to spare:* the news check on major injuries, step 3 of `runbooks/weekly.md`,
   limited to players newly out (no need to re-check timelines that Tuesday's run already confirmed).
@@ -54,7 +55,8 @@ Teams post inactives 90 minutes before kickoff. From `games.csv`, list this week
 ## 4. Build and check
 - `python3 ../pipeline/build_db.py`. Read its summary: the current week; "this week's game status: N
   questionable, ..."; "inactives posted for ...: N of our players inactive" (check a few names you know were
-  inactive); timelines plausible.
+  inactive); timelines plausible; "kickers and defenses: N kickers, 32 defenses" (a kicker ruled out or inactive
+  moves his team's kicking to whoever replaces him at the next build; note it in the report).
 - `python3 ../tests/run_tests.py` must pass; if it doesn't, don't publish — report the failing test.
 
 ## 5. Publish
@@ -78,7 +80,7 @@ archived inputs: `cp gameday.json ../data/inputs/<S>/w<WW>/<tag>/` (the freeze c
 
 ## 8. Report (a few lines)
 When it published (and whether that was before kickoff), the teams whose inactives were included and any
-notable inactive or newly ruled-out fantasy starters, Questionable starters still open, and anything that failed.
+notable inactive or newly ruled-out fantasy starters (kickers included), Questionable starters still open, and anything that failed.
 
 ## Scheduling: one task chains itself through the season
 A single scheduled task, **Fantasy Trader gameday refresh** (`trig_01SUieyie6kMwKGEbyqUzdnm`), runs every slot.

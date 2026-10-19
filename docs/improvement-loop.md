@@ -60,6 +60,12 @@ changed when the project moved into the repo github.com/AC-codemaster/fantasy-tr
    check.
 6. Parity: the backtest is compared with the engine's hindsight projections on the latest graded week; if
    they drift apart (r < 0.85 or mean difference > 2 pts) nothing is adopted until it's fixed.
+7. Kickers and D/ST (since Oct 19, 2026): their twelve settings (`"eval": "kdst"`) are tested on their own replay,
+   `backtest/kdst_backtest.py` (every D/ST and every kicker who kicked, same evaluation weeks, ESPN standard; ≈ 2,200
+   player-games, clustered by week), with the same gate. Up to 3 a run: the scorecard's "K level" / "DST level"
+   leans, then a rotation of one setting a week up and down. When both replays have a passing change, the one with
+   the larger gain relative to its own champion's average miss is adopted (still one change a week). Probation re-checks
+   K/DST changes on their replay; the neutral check covers both replays (`data/backtest/kdst_champion.*`).
 - Structural changes: the scheduled agent may add one new parameter (neutral default reproduces the old
   model, verified by the neutral check and tests) when a lean persists 3 weeks that no parameter fixes;
   the loop then tests it like any other. Rules in `runbooks/improve-agent.md`.
@@ -75,7 +81,11 @@ further, which is why the structural-change path exists.
 Parameter file consistency; assembled page = archived Week 5 engine; runner reproduces the Week 5 freeze;
 trade-engine regressions on Week 5 data (Allen for two genuine starters: median acceptance < 10% and < 35%
 of pairs at 50%+; Shough for T. Warren + J. Warren in the user's league < 20%, fixture anonymized);
-scorecard season grouping; gate behaviour.
+scorecard season grouping; gate behaviour; kickers and defenses on a fixed build
+(`tests/fixtures/db-kdst-w06.json`): engine scoring = `pipeline/kdst.py`, K/D-ST slots never used as flex, one of
+each drafted per team, near-zero trade prices, none in the finder, simulated means = projections and spreads near
+box scores, the ESPN import of their players and scoring; the builder's K/DST records; the K/DST replay beats each
+unit's season average (when season files are in `work/`).
 
 ## Rookie prior, yearly constants and offseason tasks (Oct 12, 2026)
 - Rookie-prior model (`rookie/`, `data/rookie/`, `docs/rookie-model.md`): drafted rookies had no usage prior

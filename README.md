@@ -13,7 +13,8 @@ improvement loop that tunes the model on its own.
 |---|---|
 | `engine/engine.js` | valuation engine (projections, market view, trade evaluation); one `PARAMS` line holds its tuned constants |
 | `page/template.html`, `page/ui.js` | the page shell and UI code; `tools/make_page.py` assembles the published page |
-| `pipeline/build_db.py` | builds the weekly player database (usage shares, efficiency, injuries and this week's game status, game-day inactives, expert ranks) |
+| `pipeline/build_db.py` | builds the weekly player database (usage shares, efficiency, injuries and this week's game status, game-day inactives, expert ranks; kickers and defenses from `pipeline/kdst.py`) |
+| `pipeline/kdst.py`, `backtest/kdst_backtest.py` | kickers and team defenses: expected stat lines per week from the Vegas lines and their histories, ESPN-standard points, and their own backtest; `docs/kdst.md` |
 | `dist/`, `params/dist.json` | weekly points distributions behind the Start/Sit tab: the reference simulation (`sim.py`), its fit and checks (`fit_dist.py`, `bt_frames.py`), the fitted numbers; `docs/start-sit.md` |
 | `pipeline/scorecard.py` | freezes each week's projections and grades them (incl. hindsight and rest of season) |
 | `params/params.json` | every tuned constant, with bounds and step; the only file the improvement loop edits |
@@ -24,7 +25,7 @@ improvement loop that tunes the model on its own.
 | `ledger/` | `experiments.jsonl` (every experiment), `changelog.md` (adopted/reverted), `state.json`, `last_run.md` |
 | `data/inputs/<season>/w<week>/` | what the page ran on each week (db, injuries, params, engine): replayable |
 | `data/freeze`, `data/ros`, `data/graded`, `data/scorecard` | frozen projections, grades, scorecard data |
-| `tests/` | checks that must pass before publishing (page parity, trade-engine regressions, season grouping, gate) |
+| `tests/` | checks that must pass before publishing (page parity, trade-engine regressions, season grouping, gate, kickers and defenses on a fixed build) |
 | `runbooks/` | `weekly.md` (the Tuesday scheduled task), `gameday.md` (pre-kickoff refreshes on every game day, with inactives; one self-scheduling task), `improve-agent.md` (structural changes), `rollover.md`, and the offseason tasks: `rookie-draft.md` (May), `annual-refit.md` (February, with the sealed holdout), `trade-autopsy.md` (January); `saturday.md` is retired |
 | `tools/trade_autopsy.py` | every trade in a league: the model at the trade date vs what each side gained; acceptance re-graded |
 
@@ -42,8 +43,8 @@ inactives), and every other game day (Thanksgiving, Christmas, late-season Satur
 kickoff. They fold in the final injury reports and game-day inactives, republish the page and freeze a
 pre-kickoff snapshot for the scorecard. The weekly run checks that the task is armed (`weekly.md` step 10b).
 
-The improvement loop adopts at most one parameter change a week, only when it clearly lowers the
-average miss over two-plus seasons of backtest weeks, and re-checks every adopted change on the weeks
+The improvement loop adopts at most one parameter change a week (offense or kicker/D-ST, each on its own replay),
+only when it clearly lowers the average miss over two-plus seasons of backtest weeks, and re-checks every adopted change on the weeks
 played after it (reverting it if they don't back it up). See `runbooks/improve-agent.md`.
 
 ## Offseason
@@ -61,6 +62,7 @@ python3 ../backtest/fetch_history.py 2024 2025 2026
 python3 ../tests/run_tests.py
 python3 ../backtest/evaluate.py --set decay=0.875   # one experiment by hand
 python3 ../improve/improve.py --dry-run             # what this week's loop would do
+python3 ../backtest/kdst_backtest.py --baselines    # kickers and defenses: the replay vs naive references
 python3 ../rookie/rookie_model.py all --cache rk    # rookie priors (downloads into rk/)
 python3 ../tools/make_page.py --db db.json --injnews injury_news.json --out fantasy-trader.html
 ```

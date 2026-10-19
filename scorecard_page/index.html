@@ -185,6 +185,7 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
     if (graded) {
       parts.push(weekly(o));
       parts.push(sources(o, L));
+      if (o.cumulative && o.cumulative.kd && Object.keys(o.cumulative.kd).length) parts.push(kdst(o));
       parts.push(rosSection(o));
       parts.push(diagnostics(o));
       parts.push(volume(o));
@@ -261,7 +262,7 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
       <h2>Week ${p.week}: frozen, waiting for games</h2>
       <p class="lede">Frozen ${day(p.frozenAt)} from page data built ${day(p.pageBuilt)}: ${p.n} players (${p.nAvail} expected to play). Graded the Tuesday after the week ends.${p.note ? " " + esc(p.note) + "." : ""}</p>
       <div class="frozen-cols">
-        ${["QB", "RB", "WR", "TE"].map((pos) => `<div class="box"><div class="label">${pos} · top projections</div>
+        ${["QB", "RB", "WR", "TE", "K", "DST"].filter((pos) => (p.top[pos] || []).length).map((pos) => `<div class="box"><div class="label">${pos === "DST" ? "D/ST" : pos} · top projections</div>
           <table class="mini"><thead><tr><th>Player</th><th class="n">Ours</th><th class="n">FP</th></tr></thead><tbody>
           ${(p.top[pos] || []).map((r) => `<tr><td>${esc(r.name)} <span class="sub" style="display:inline">${esc(r.team)}</span></td><td class="n">${f(r.page, 1)}</td><td class="n">${f(r.fp, 1)}</td></tr>`).join("")}
           </tbody></table></div>`).join("")}
@@ -356,6 +357,23 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
       <div class="box tablewrap"><h3 style="margin-bottom:6px">By position</h3><table>
         <thead><tr><th>Pos</th><th class="n">Players</th><th class="n">Our miss</th><th class="n">FP Tue</th><th class="n">FP final</th><th class="n">Our start/sit %</th><th class="n">FP final start/sit %</th></tr></thead>
         <tbody>${pos}</tbody></table></div>
+    </section>`;
+  }
+
+  /* Kickers and team defenses: graded on their own (ESPN standard scoring), not in the numbers above. */
+  function kdst(o) {
+    const c = o.cumulative, rows = Object.entries(c.kd).map(([pos, x]) => {
+      const b = c.byPos[pos] || {}, us = b.page || {}, e = b.fp_early || {}, fin = b.fp_final || {}, pr = (x.page_vs_final || {}).pairs || {};
+      const m = (x.page_vs_final || {}).mae;
+      return `<tr><td><span class="chip">${pos === "DST" ? "D/ST" : pos}</span></td><td class="n">${x.weeks}</td><td class="n">${us.n || 0}</td><td class="n">${f(us.mae)}</td><td class="n">${f(e.mae)}</td><td class="n">${f(fin.mae)}</td>
+        <td class="n">${f(us.rho, 3)}</td><td class="n">${f(fin.rho, 3)}</td><td class="n">${f(pr.a, 1)}</td><td class="n">${f(pr.b, 1)}</td><td>${esc(((x.page_vs_final || {}).verdict || {}).mae || "")}</td></tr>`;
+    }).join("");
+    return `<section>
+      <h2>Kickers and defenses</h2>
+      <p class="lede">Graded since the Week 7 freeze (Oct 20, 2026), in ESPN standard scoring, and kept out of the numbers above so the goal lines stay comparable week to week. The fantasy-relevant set is the top ${(o.relN || {}).K || 14} at each by our projection or FantasyPros. FantasyPros may score defenses without yards allowed, so its misses there run a little high; rank correlation and start/sit calls compare cleanly.</p>
+      <div class="box tablewrap"><table>
+        <thead><tr><th>Pos</th><th class="n">Weeks</th><th class="n">Players</th><th class="n">Our miss</th><th class="n">FP Tue</th><th class="n">FP final</th><th class="n">Our rank corr</th><th class="n">FP final rank corr</th><th class="n">Our start/sit %</th><th class="n">FP final start/sit %</th><th>Miss vs FP final</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
     </section>`;
   }
 
@@ -478,6 +496,7 @@ tr.fp td:first-child { box-shadow: inset 3px 0 0 var(--fp); }
         <p><b>Hindsight.</b> After the games, the same model is rerun on the same inputs, told who actually played. The gap between that and Tuesday's projection is news; what's left is the model's own error, which is what the diagnostics and the improvement loop work on.</p>
         <p><b>Grade.</b> The next Tuesday, after the games, each projection is compared with the player's real stat line from nflverse. Only players who took an offensive snap count, so a late scratch isn't held against anyone. The main set is fantasy-relevant players: the top ${n.QB} QBs, ${n.RB} RBs, ${n.WR} WRs and ${n.TE} TEs by our projection or by FantasyPros.</p>
         <p><b>Benchmark.</b> FantasyPros' weekly expert consensus pools rankings from dozens of public sites. Its rank and projected points come from DynastyProcess's twice-daily snapshots: the first snapshot of the week (Tuesday, the same information we had) and the last one before each player's kickoff (final, with all the week's injury news).</p>
+        <p><b>Kickers and defenses.</b> Since the Week 7 freeze, kickers and team defenses are frozen and graded too, in ESPN standard scoring (a kicker counts when he tried a kick, a defense when its game was played), in their own section.</p>
         <p><b>Metrics.</b> Average miss is the mean absolute difference in PPR points. Start/sit calls are same-position pairs within ${o.close || 12} consensus ranks of each other; a source gets the call right when it ranked the higher scorer first. Intervals account for players in the same game moving together.</p>
       </div>
     </section>`;

@@ -22,7 +22,7 @@
   --bad-soft: #f5dcd9;
   --warn: #9a6210;
   --warn-soft: #f4e6cc;
-  --qb: #7b4fb0; --rb: #1f7a6e; --wr: #2f62b5; --te: #a8541c;
+  --qb: #7b4fb0; --rb: #1f7a6e; --wr: #2f62b5; --te: #a8541c; --k: #7d6a12; --dst: #4f5d6b;
   --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
   --body: "Barlow", "Segoe UI", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -33,7 +33,7 @@
     --bg: #0e1511; --surface: #151f18; --surface-2: #1c2820; --ink: #e4ebe5; --muted: #95a59b; --line: #2a382f;
     --field: #163a25; --field-ink: #e8f2ea; --accent: #ff7433; --accent-ink: #1a0d06; --accent-soft: #3a2116;
     --good: #4cc27e; --good-soft: #17301f; --bad: #f06a5e; --bad-soft: #3a1b18; --warn: #e3a43c; --warn-soft: #33270f;
-    --qb: #b18ae6; --rb: #4fc2b0; --wr: #7aa6f0; --te: #e5935a;
+    --qb: #b18ae6; --rb: #4fc2b0; --wr: #7aa6f0; --te: #e5935a; --k: #d4bb57; --dst: #a3b2c2;
     color-scheme: dark;
   }
 }
@@ -41,7 +41,7 @@
   --bg: #0e1511; --surface: #151f18; --surface-2: #1c2820; --ink: #e4ebe5; --muted: #95a59b; --line: #2a382f;
   --field: #163a25; --field-ink: #e8f2ea; --accent: #ff7433; --accent-ink: #1a0d06; --accent-soft: #3a2116;
   --good: #4cc27e; --good-soft: #17301f; --bad: #f06a5e; --bad-soft: #3a1b18; --warn: #e3a43c; --warn-soft: #33270f;
-  --qb: #b18ae6; --rb: #4fc2b0; --wr: #7aa6f0; --te: #e5935a;
+  --qb: #b18ae6; --rb: #4fc2b0; --wr: #7aa6f0; --te: #e5935a; --k: #d4bb57; --dst: #a3b2c2;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -87,7 +87,7 @@ a.btn:hover { border-color: var(--accent); color: var(--accent); }
 .wk-cell.po { background: var(--surface-2); }
 .wk-plot { height: 58px; width: 100%; display: flex; align-items: flex-end; justify-content: center; border-bottom: 1px solid var(--line); }
 .wk-plot i { display: block; width: min(14px, 80%); background: var(--muted); border-radius: 4px 4px 0 0; }
-.wk-plot i.QB { background: var(--qb); } .wk-plot i.RB { background: var(--rb); } .wk-plot i.WR { background: var(--wr); } .wk-plot i.TE { background: var(--te); }
+.wk-plot i.QB { background: var(--qb); } .wk-plot i.RB { background: var(--rb); } .wk-plot i.WR { background: var(--wr); } .wk-plot i.TE { background: var(--te); } .wk-plot i.K { background: var(--k); } .wk-plot i.DST { background: var(--dst); }
 .wk-off { font-size: 10px; color: var(--muted); padding-bottom: 3px; }
 .wk-n { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
 .owner-cell { max-width: 8em; overflow: hidden; text-overflow: ellipsis; }
@@ -147,7 +147,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .fields { display: grid; gap: 12px 16px; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
 
 .chip { display: inline-block; font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .06em; padding: 1px 6px; border-radius: 4px; color: var(--surface); min-width: 30px; text-align: center; }
-.chip.QB { background: var(--qb); } .chip.RB { background: var(--rb); } .chip.WR { background: var(--wr); } .chip.TE { background: var(--te); }
+.chip.QB { background: var(--qb); } .chip.RB { background: var(--rb); } .chip.WR { background: var(--wr); } .chip.TE { background: var(--te); } .chip.K { background: var(--k); } .chip.DST { background: var(--dst); }
 .tag { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 99px; white-space: nowrap; }
 .tag.ir { background: var(--bad-soft); color: var(--bad); }
 .tag.q { background: var(--warn-soft); color: var(--warn); }
@@ -242,8 +242,8 @@ textarea { width: 100%; min-height: 110px; font-family: var(--mono); font-size: 
 .rbar i.r90 { background: color-mix(in srgb, var(--muted) 35%, transparent); }
 .rbar i.r50 { top: 2px; height: 8px; background: color-mix(in srgb, var(--muted) 70%, transparent); }
 .rbar i.med { top: 0; height: 12px; width: 2px; border-radius: 1px; background: var(--ink); }
-.rbar i.QB { background: var(--qb); } .rbar i.RB { background: var(--rb); } .rbar i.WR { background: var(--wr); } .rbar i.TE { background: var(--te); }
-.rbar i.r90.QB, .rbar i.r90.RB, .rbar i.r90.WR, .rbar i.r90.TE { opacity: .35; }
+.rbar i.QB { background: var(--qb); } .rbar i.RB { background: var(--rb); } .rbar i.WR { background: var(--wr); } .rbar i.TE { background: var(--te); } .rbar i.K { background: var(--k); } .rbar i.DST { background: var(--dst); }
+.rbar i.r90.QB, .rbar i.r90.RB, .rbar i.r90.WR, .rbar i.r90.TE, .rbar i.r90.K, .rbar i.r90.DST { opacity: .35; }
 .slot-lab { font-family: var(--display); font-weight: 600; font-size: 12.5px; letter-spacing: .06em; color: var(--muted); white-space: nowrap; }
 tr.bench td { color: var(--muted); }
 tr.bench td .pname { font-weight: 500; }
@@ -312,6 +312,7 @@ tr.locked td { opacity: .75; }
 <script type="application/json" id="injnews">{{INJNEWS}}</script>
 <!-- Weekly refresh: the builder script and runbook travel with the page (see the Method tab, section 7). -->
 <script type="text/plain" id="builder">{{BUILDER}}</script>
+<script type="text/plain" id="kdst">{{KDST}}</script>
 <script type="application/json" id="params">{{PARAMS}}</script>
 <script type="text/plain" id="runbook">{{RUNBOOK}}</script>
 <script>

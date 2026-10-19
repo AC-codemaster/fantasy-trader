@@ -4,6 +4,11 @@ The model improves itself in two ways, both judged by the same evidence and the 
 suggestion is needed for either; the user can still ask for an experiment (`improve.py --try name=value`).
 
 ## 1. Parameter tuning (automatic, every Tuesday)
+Two replays: the offense backtest (`backtest/backtest_core.py`, params with `"eval": "backtest"`) and the kicker and
+D/ST replay (`backtest/kdst_backtest.py`, params with `"eval": "kdst"`; the model is `pipeline/kdst.py`, notes in
+`docs/kdst.md`). Each run tests up to 8 offense changes and up to 3 K/DST settings, all against the same gate, and
+adopts at most one change in total.
+
 `improve/improve.py` does it all: probation review, experiments from the scorecard's leans and from a
 rotation through every tunable parameter, the gate, at most one adopted change, the ledger. Nothing to
 decide by hand. Read `ledger/last_run.md` afterwards for the report.
@@ -33,10 +38,13 @@ at 0). Implement it in all places that compute projections:
   mapping in `tools/ftlib.py` `backtest_params`,
 - `params/params.json`: the entry with value = neutral, sensible min/max and step, `"layer"`, `"eval": "backtest"`,
   `"desc"`, and `"new": true` so the next improvement run tries it first.
+- For a lean on kickers or defenses ("K level", "DST level"): the adjustment goes in `pipeline/kdst.py` only (a new
+  key in `kdst.DEFAULTS` at its neutral value, used in `profiles`/`project_k`/`project_dst`; the builder and the
+  K/DST replay both read it from there) and in `params/params.json` with `"eval": "kdst"`.
 Then verify, in this order, and undo the whole change (`git checkout -- .`) if any check fails:
 1. `python3 tests/run_tests.py` passes (from the repo root).
-2. `python3 ../improve/improve.py --neutral-check` from `work/` prints OK (the backtest is unchanged at the
-   neutral value).
+2. `python3 ../improve/improve.py --neutral-check` from `work/` prints OK for both replays (the backtests are
+   unchanged at the neutral value).
 3. If you touched build_db.py: build db.json before and after the change (`cp db.json db_before.json`
    first) and confirm every player's `m`, `a`, `s`, `f` values are identical.
 4. `python3 ../improve/improve.py --only <name> --dry-run` runs without errors.
