@@ -1,14 +1,15 @@
-# Fantasy Trader — pre-kickoff refresh (Thursday night, Sunday morning)
+# Fantasy Trader — pre-kickoff refresh (every game day)
 
 Purpose: the best injury information before games lock. Thursday's run starts right after the Thursday game's
-inactives (about 6:45 pm ET for an 8:15 pm kickoff); Sunday's right after the 1 pm inactives (about 11:30 am ET).
+inactives (about 6:45 pm ET for an 8:15 pm kickoff); Sunday's right after the 1 pm inactives (about 11:30 am ET);
+other game days (international mornings, holidays, late-season Saturdays) the same way before their first kickoff.
 Each run folds in the latest injury reports and every game-day inactive list posted so far, republishes the
 page (projections, Start/Sit, the floor-vs-ceiling tools) and freezes a pre-kickoff snapshot. No grading, no
 improvement loop, no parameter changes.
 
 Repo: github.com/AC-codemaster/fantasy-trader · Page: https://claude.ai/artifact/QYtsAKr3WaL59s1xWMcw1C
 
-**The deadline is kickoff.** Thursday: 8:15 pm ET. Sunday: 1:00 pm ET. Publish by kickoff minus 15 minutes; if
+**The deadline is kickoff** (the slot's `kickoff` from `tools/gameday_slots.py`; Thursday 8:15 pm ET, Sunday 1:00 pm ET). Publish by kickoff minus 15 minutes; if
 you're running late, skip what's marked *optional* and publish. A page published after kickoff still helps the
 later games, so publish late rather than not at all, and say so in the report.
 
@@ -79,38 +80,19 @@ archived inputs: `cp gameday.json ../data/inputs/<S>/w<WW>/<tag>/` (the freeze c
 When it published (and whether that was before kickoff), the teams whose inactives were included and any
 notable inactive or newly ruled-out fantasy starters, Questionable starters still open, and anything that failed.
 
-## Special game days
-The recurring tasks cover Thursday night (6:52 pm ET), Sunday mornings with an international game (8:07 am,
-skipped in other weeks) and Sunday 1 pm (11:37 am). Any other game day (Thanksgiving's daytime games, Black
-Friday, Christmas, late-season Saturdays, a Wednesday game) gets a one-time scheduled task, created by the weekly
-run (`runbooks/weekly.md` step 10b) when it doesn't exist yet:
-- time: the day's first kickoff minus 83 minutes, America/New_York (`run_once_at` in UTC);
-- name: `Fantasy Trader pre-kickoff refresh (<Weekday> <Mon> <D>)`;
-- tag: `late-<3-letter weekday>`, but `late-thu-am` for a Thursday daytime game (the Thursday night run keeps
-  `late-thu`);
-- prompt (fill in the `<...>`):
+## Scheduling: one task chains itself through the season
+A single scheduled task, **Fantasy Trader gameday refresh** (`trig_01SUieyie6kMwKGEbyqUzdnm`), runs every slot.
+`python3 tools/gameday_slots.py` turns `games.csv` into slots, America/New_York, 83 minutes before a kickoff
+(7 minutes after its inactives):
+- every game day except Monday, before the day's first kickoff (Thursday night, Sunday 1 pm, Wednesday, Black
+  Friday, Christmas, late-season Saturdays, Week 1 openers);
+- after an international morning game, also before the 1 pm slate (`late-sun-am`, then `late-sun`);
+- a Thursday with daytime games (Thanksgiving), also before the night game (`late-thu-am`, then `late-thu`);
+- a game-less Thursday in a week with games (Week 18), 6:52 pm for Thursday's practice reports.
+`--list` shows them all. Flexed or moved games are picked up automatically: each run reads `games.csv` again.
 
-> Run the Fantasy Trader pre-kickoff refresh for <Weekday> <Mon> <D>'s games (<away at home, kickoff ET; ...>):
-> right after the first game's inactives (about <kickoff − 90 min> ET), fold the latest injury reports and the
-> inactives into the page, republish it before the <first kickoff> ET kickoff, and freeze that version as a
-> pre-kickoff snapshot.
->
-> Page: https://claude.ai/artifact/QYtsAKr3WaL59s1xWMcw1C · Repo: github.com/AC-codemaster/fantasy-trader (private)
->
-> 1. Download https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv (curl) and check that a
->    game still kicks off today within the next 3 hours (games get flexed or moved); if not, stop with a
->    one-line report.
-> 2. Call add_repo with owner "AC-codemaster", repo "fantasy-trader", access "push". Clone it (git clone
->    https://github.com/AC-codemaster/fantasy-trader; generous timeout) and cd into it.
-> 3. Read runbooks/gameday.md and follow it exactly. The snapshot tag is <tag>.
->
-> Deadline: publish by <first kickoff − 15 min> ET. If you're running late, skip the optional steps and
-> publish; a page published after kickoff still helps the later games, so publish late rather than not at all
-> and say so.
->
-> Rules: no grading, no improvement loop, no parameter changes. Never publish partial or obviously wrong data;
-> tests must pass before publishing. Never edit frozen weeks or archived inputs and never pass --force. Don't
-> touch the page's saved leagues or capabilities. If there's no Tuesday freeze for the week, still publish the
-> page and skip only the freeze. If the repo can't be attached or a push is refused, report it plainly with the
-> exact error; after pushing, check that origin/main equals your commit. Finish with a few lines: when it
-> published, the inactives included, notable ruled-out fantasy starters, and anything that failed.
+Each run prints `{"current", "next"}` and, **before refreshing**, re-arms its own task for the next slot
+(`update_trigger` with the printed `cron`); with no next slot (season over) it pauses the task
+(`enabled=false`). So a run that fails halfway still leaves the next one scheduled. The weekly run checks the
+chain every Tuesday (`runbooks/weekly.md` step 10b), and the August rollover re-arms it for the new season.
+Don't create separate one-time tasks for special game days.

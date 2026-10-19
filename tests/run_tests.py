@@ -322,6 +322,25 @@ def startsit_matches_reference_simulation():
     assert 0.95 < np.median(ratio) < 1.05, f"uncalibrated simulation doesn't reproduce the projections ({np.median(ratio):.3f})"
 
 
+@test
+def gameday_slots_cover_every_game_day():
+    from datetime import datetime
+    import gameday_slots as gs
+    S = gs.slots(gs.load_games(os.path.join(ROOT, "tests", "fixtures", "games-2026-slots.csv")))
+    got = {(f"{s['at']:%m-%d %H:%M}", s["tag"], len(s["games"])) for s in S}
+    want = {("10-22 18:52", "late-thu", 1), ("10-25 08:07", "late-sun-am", 1), ("10-25 11:37", "late-sun", 11),
+            ("11-25 18:37", "late-wed", 1), ("11-26 11:37", "late-thu-am", 2), ("11-26 18:57", "late-thu", 1),
+            ("11-27 13:37", "late-fri", 1), ("12-19 15:37", "late-sat", 2), ("12-25 11:37", "late-fri", 3),
+            ("01-07 18:52", "late-thu", 0)}
+    assert want <= got, f"missing slots: {sorted(want - got)}"
+    assert not any(s["at"].weekday() == 0 for s in S), "Monday games get no slot of their own"
+    assert len(S) == 16, f"{len(S)} slots for weeks 7, 12, 15, 16, 18 (expected 16)"
+    p = gs.plan(S, datetime.fromisoformat("2026-11-26T11:41-05:00"))
+    assert p["current"]["tag"] == "late-thu-am" and p["next"]["cron"] == "CRON_TZ=America/New_York 57 18 26 11 *", p
+    p = gs.plan(S, datetime.fromisoformat("2027-01-10T11:40-05:00"))
+    assert p["current"]["tag"] == "late-sun" and p["next"] is None, p
+
+
 if __name__ == "__main__":
     sys.path.insert(0, os.path.join(ROOT, "improve"))
     fails = 0

@@ -108,8 +108,8 @@ had stopped and the CBS pages weren't read).
 ## Refreshes
 
 `runbooks/gameday.md`: Thursday about 6:52 pm ET (after the Thursday game's inactives), Sunday about 8:07 am ET
-only in weeks with a morning international game (it checks `games.csv` and stops otherwise), and Sunday about
-11:37 am ET (after the 1 pm inactives). Each folds in CBS pages, the NFL report, and game-day inactives posted so
+only in weeks with a morning international game, Sunday about 11:37 am ET (after the 1 pm inactives), and
+other game days before their first kickoff; one task schedules itself from `games.csv` (`tools/gameday_slots.py`). Each folds in CBS pages, the NFL report, and game-day inactives posted so
 far, republishes, and freezes a pre-kickoff snapshot (`late-thu`, `late-sun-am`, `late-sun`; a catch-up run on
 another day uses `late-<weekday>`). The scorecard's "late" view takes, for each player, the latest snapshot
 frozen before his kickoff. The Saturday refresh (`runbooks/saturday.md`) is retired: its scheduled task now runs

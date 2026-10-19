@@ -21,4 +21,5 @@ branch, merge only when the tests pass.
    field names; if the rename breaks them, convert the fixture db once with a small script (keep the
    original under `data/inputs/2026/`).
 8. The ledger and parameters carry over unchanged: they are the model's memory. Re-enable the weekly
-   scheduled task for the new season.
+   scheduled task for the new season (it pauses itself in the offseason), and arm the gameday task for the new
+   season's first slot exactly as `runbooks/weekly.md` step 10b says.

@@ -100,12 +100,12 @@ frozen, week N−1 graded". On a conflict, re-read and repeat once.
   `data/scorecard/scorecard.md`; `claude/model-changelog.md` ← `ledger/changelog.md`;
   `claude/injury_news.json` ← `work/injury_news.json`.
 
-## 10b. Special game days
-If this week has games on a day other than Sunday, Monday or Thursday night (Thanksgiving's daytime games, Black
-Friday, Christmas, late-season Saturdays, a Wednesday game; check `games.csv`), make sure each such day has its
-one-time pre-kickoff task: `list_triggers`, and if no task named `Fantasy Trader pre-kickoff refresh (<Weekday>
-<Mon> <D>)` exists for that date, create it as `runbooks/gameday.md` "Special game days" describes. Mention any
-task you created in the report.
+## 10b. Gameday task check
+Every game-day refresh comes from one self-scheduling task (`runbooks/gameday.md`, "Scheduling"). Make sure it's
+armed: `python3 tools/gameday_slots.py` (from the repo root) prints the `next` slot; `list_triggers` and find
+**Fantasy Trader gameday refresh** (`trig_01SUieyie6kMwKGEbyqUzdnm`). If it is disabled or its `next_run_at`
+isn't the same moment as the printed `next.at`, `update_trigger` it with `cron_expression` = `next.cron` and `enabled=true` (with no
+`next` slot, leave it paused). Say in the report what you changed, if anything. Don't create one-time tasks.
 
 ## 11. Report
 A short summary: data week; notable injury changes; last week's average miss for our page vs FantasyPros

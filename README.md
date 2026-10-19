@@ -25,7 +25,7 @@ improvement loop that tunes the model on its own.
 | `data/inputs/<season>/w<week>/` | what the page ran on each week (db, injuries, params, engine): replayable |
 | `data/freeze`, `data/ros`, `data/graded`, `data/scorecard` | frozen projections, grades, scorecard data |
 | `tests/` | checks that must pass before publishing (page parity, trade-engine regressions, season grouping, gate) |
-| `runbooks/` | `weekly.md` (the Tuesday scheduled task), `gameday.md` (Thursday night and Sunday morning pre-kickoff refreshes, with inactives), `improve-agent.md` (structural changes), `rollover.md`, and the offseason tasks: `rookie-draft.md` (May), `annual-refit.md` (February, with the sealed holdout), `trade-autopsy.md` (January); `saturday.md` is retired |
+| `runbooks/` | `weekly.md` (the Tuesday scheduled task), `gameday.md` (pre-kickoff refreshes on every game day, with inactives; one self-scheduling task), `improve-agent.md` (structural changes), `rollover.md`, and the offseason tasks: `rookie-draft.md` (May), `annual-refit.md` (February, with the sealed holdout), `trade-autopsy.md` (January); `saturday.md` is retired |
 | `tools/trade_autopsy.py` | every trade in a league: the model at the trade date vs what each side gained; acceptance re-graded |
 
 ## The weekly loop
@@ -35,11 +35,12 @@ injuries, grade last week's frozen projections (also rerun with who actually pla
 Tuesday isn't blamed on the model), run the improvement loop, rebuild with the live parameters, test,
 publish the page, freeze this week's projections and archive their inputs, publish the scorecard, commit.
 
-More scheduled runs follow `runbooks/gameday.md` before games lock: Thursday about 6:52 pm ET (after the
-Thursday game's inactives), Sunday about 8:07 am ET in weeks with a morning international game, and Sunday about
-11:37 am ET (after the 1 pm inactives). They fold in the final injury reports and game-day inactives, republish
-the page and freeze a pre-kickoff snapshot for the scorecard. Other game days (Thanksgiving, Christmas,
-late-season Saturdays) get one-time runs, created by the weekly run when missing (`weekly.md` step 10b).
+More scheduled runs follow `runbooks/gameday.md` before games lock: one task that schedules itself from
+`games.csv` (`tools/gameday_slots.py`) — Thursday about 6:52 pm ET (after the Thursday game's inactives), Sunday
+about 8:07 am ET only in weeks with a morning international game, Sunday about 11:37 am ET (after the 1 pm
+inactives), and every other game day (Thanksgiving, Christmas, late-season Saturdays) 83 minutes before its first
+kickoff. They fold in the final injury reports and game-day inactives, republish the page and freeze a
+pre-kickoff snapshot for the scorecard. The weekly run checks that the task is armed (`weekly.md` step 10b).
 
 The improvement loop adopts at most one parameter change a week, only when it clearly lowers the
 average miss over two-plus seasons of backtest weeks, and re-checks every adopted change on the weeks
