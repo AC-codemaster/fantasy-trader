@@ -1,5 +1,5 @@
 {
- "rotation": 2,
+ "rotation": 4,
  "probation": [
   {
    "change": {
@@ -37,11 +37,17 @@
   }
  ],
  "lastRun": {
-  "date": "2026-10-13",
-  "week": "2026-w06",
-  "tested": null,
-  "adopted": "rookie_prior 0 \u2192 0.25",
-  "parity": null,
-  "note": "recovered 2026-10-17 (that run's push was lost)"
- }
+  "date": "2026-10-20",
+  "week": "2026-w07",
+  "tested": 6,
+  "adopted": null,
+  "parity": {
+   "week": "2026-w06",
+   "n": 206,
+   "r": 0.992,
+   "meanAbsDiff": 0.46,
+   "ok": true
+  }
+ },
+ "rotation_kd": 1
 }
