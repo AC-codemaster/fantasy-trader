@@ -77,4 +77,22 @@ const espn = { id: 1, seasonId: DB.season, scoringPeriodId: DB.curWeek, settings
 const imp = E.parseEspn(espn, DB, {});
 out.espn = { roster: imp.teams[0].roster, want: [kp.id, dp.id], slots: imp.settings.slots, report: imp.report,
   scoring: Object.fromEntries(["patMade", "fg0", "fg40", "fg50", "fg60", "fgMiss", "sack", "dInt", "dTd", "stTd", "paTier", "yaTier"].map((k) => [k, imp.settings.scoring[k]])) };
+// The shape ESPN really sends (a public league's mSettings, Oct 2026): D/ST rules only as an override on the D/ST
+// slot (16) with points 0, FG 50-59 as stat 198 and 60+ as 201. The first importer read `points` only and gave
+// such leagues D/ST scoring of touchdowns alone and nothing for 50-59 yard field goals.
+const real = [[85, -1], [86, 1], [80, 3], [77, 4], [198, 5], [201, 6]].map(([statId, points]) => ({ statId, points, pointsOverrides: {} }))
+  .concat([[89, 5], [90, 4], [91, 3], [92, 1], [95, 2], [96, 2], [97, 2], [98, 2], [99, 1], [123, -1], [124, -3], [125, -5],
+    [128, 5], [129, 3], [130, 2], [132, -1], [133, -3], [134, -5], [135, -6], [136, -7]].map(([statId, p]) => ({ statId, points: 0, pointsOverrides: { 16: p } })))
+  .concat([93, 101, 102, 103, 104].map((statId) => ({ statId, points: 6, pointsOverrides: { 16: 6 } })));
+const espn2 = JSON.parse(JSON.stringify(espn));
+espn2.settings.scoringSettings.scoringItems = espn.settings.scoringSettings.scoringItems.slice(0, 4).concat(real);
+const imp2 = E.parseEspn(espn2, DB, {});
+const sc2 = imp2.settings.scoring;
+out.espnReal = { scoring: Object.fromEntries([...E.K_KEYS, ...E.D_KEYS, "paTier", "yaTier"].map((k) => [k, sc2[k]])), ignored: imp2.report.ignoredScoring };
+// projected points this week under the imported rules vs ESPN standard, averaged over every kicker and defense
+const wk = String(DB.curWeek), mean = (a) => a.reduce((s, x) => s + x, 0) / Math.max(1, a.length);
+for (const p of ["K", "DST"]) {
+  const ps = kd.filter((x) => x.p === p && x.kw && x.kw[wk]);
+  out.espnReal[p] = { imported: mean(ps.map((x) => E.scoreComp(x.kw[wk], sc2, p))), standard: mean(ps.map((x) => E.scoreComp(x.kw[wk], sc, p))) };
+}
 process.stdout.write(JSON.stringify(out));

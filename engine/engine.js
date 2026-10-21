@@ -1936,12 +1936,15 @@ const ESPN_SLOTS = { 0: "QB", 2: "RB", 3: "RBWR", 4: "WR", 5: "WRTE", 6: "TE", 7
 const ESPN_POS = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "D/ST" };
 const ESPN_SLOT_POS = { 0: "QB", 2: "RB", 4: "WR", 6: "TE" };
 const ESPN_STATS = { 3: "passYd", 4: "passTd", 20: "int", 24: "rushYd", 25: "rushTd", 53: "rec", 42: "recYd", 43: "recTd", 72: "fumble", 19: "twoPt", 26: "twoPt", 44: "twoPt" };
-// kickers and team defenses (ESPN stat ids; 74 is "FG made 50+" in old leagues and 50-59 once 201 is set)
+// kickers and team defenses (ESPN stat ids; parseKdScoring reads these and the overlapping ones below)
 const ESPN_KD_STATS = { 86: "patMade", 88: "patMiss", 80: "fg0", 77: "fg40", 74: "fg50", 201: "fg60", 85: "fgMiss", 82: "fgMiss0", 79: "fgMiss40", 76: "fgMiss50",
   99: "sack", 95: "dInt", 96: "fumRec", 98: "safety", 94: "dTd", 101: "stTd", 97: "blk", 120: "ptsAllowed", 127: "ydsAllowed" };
 const ESPN_PA_TIERS = [89, 90, 91, 92, 121, 122, 123, 124, 125];
+const ESPN_DPA_TIERS = [188, 189, 190, 191, 192, 193, 194, 195, 196]; // the "D/ST points allowed" versions
 const ESPN_YA_TIERS = [128, 129, 130, 131, 132, 133, 134, 135, 136];
-const ESPN_KD_KNOWN = new Set([...Object.keys(ESPN_KD_STATS).map(Number), ...ESPN_PA_TIERS, ...ESPN_YA_TIERS, 83, 93, 102, 103, 104, 105, 203]);
+const ESPN_K_IDS = new Set([74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 198, 199, 200, 201, 202, 203]);
+const ESPN_KD_KNOWN = new Set([...Object.keys(ESPN_KD_STATS).map(Number), ...ESPN_PA_TIERS, ...ESPN_DPA_TIERS, ...ESPN_YA_TIERS, ...ESPN_K_IDS,
+  93, 100, 102, 103, 104, 105, 187]);
 
 /* Pull a league ID (and season / team, when present) out of an ID or any ESPN link. */
 function parseLeagueInput(text) {
@@ -1987,21 +1990,48 @@ function espnProjection(stats, season, week) {
 }
 
 /* Kicker and D/ST scoring from ESPN's scoring items. Rules the league doesn't list score 0. */
+/*
+ * A league's kicker and D/ST rules from ESPN's scoring items. ESPN keeps a rule either in `points` or, for stats
+ * that individual players can also record (sacks, interceptions, fumble recoveries, points and yards allowed, return
+ * TDs), as an override on the D/ST lineup slot (16) or kicker slot (17) with `points` 0 — so the slot's override
+ * comes first (as in the espn-api library). Every stat a play increments scores, so overlapping rules add up:
+ * "FG made 50+" (74) and "50-59" (198) or "60+" (201), "total FG made/attempted" (83/84), attempts by distance.
+ */
 function parseKdScoring(items) {
-  const out = {}, by = new Map();
-  for (const it of items || []) if (it && it.statId != null) by.set(+it.statId, +it.points || 0);
-  for (const [id, k] of Object.entries(ESPN_KD_STATS)) out[k] = by.has(+id) ? by.get(+id) : 0;
-  // FG made 50+ (74) covers 60+ in leagues without a 60+ rule; "total FG made" (83) adds to every distance
-  if (!by.has(201)) out.fg60 = out.fg50;
-  if (by.has(83)) for (const k of ["fg0", "fg40", "fg50", "fg60"]) out[k] += by.get(83);
-  if (by.has(203) && !by.has(76)) out.fgMiss50 = by.get(203);
-  // defensive TDs: one rule for all, or interception (103) / fumble (104) return TDs; return TDs: kickoff (101),
-  // punt (102) or blocked kick (93) returns; "total return TD" (105) counts for both
-  if (!by.has(94)) out.dTd = by.has(103) ? by.get(103) : by.has(104) ? by.get(104) : 0;
-  if (!by.has(101)) out.stTd = by.has(102) ? by.get(102) : by.has(93) ? by.get(93) : 0;
-  if (by.has(105)) { out.dTd += by.get(105); out.stTd += by.get(105); }
-  out.paTier = ESPN_PA_TIERS.map((id) => (by.has(id) ? by.get(id) : 0));
-  out.yaTier = ESPN_YA_TIERS.map((id) => (by.has(id) ? by.get(id) : 0));
+  const by = new Map();
+  for (const it of items || []) {
+    if (!it || it.statId == null) continue;
+    const id = +it.statId, ov = it.pointsOverrides || {}, slot = ESPN_K_IDS.has(id) ? "17" : "16";
+    by.set(id, ov[slot] != null && ov[slot] !== "" ? +ov[slot] || 0 : +it.points || 0);
+  }
+  const v = (id) => (by.has(id) ? by.get(id) : 0), has = (id) => by.has(id);
+  const out = {};
+  out.patMade = v(86) + v(87);
+  out.patMiss = v(88) + v(87);
+  out.fg0 = v(80) + v(81) + v(83) + v(84);
+  out.fg40 = v(77) + v(78) + v(83) + v(84);
+  out.fg50 = v(74) + v(75) + v(198) + v(199) + v(83) + v(84);
+  out.fg60 = v(74) + v(75) + v(201) + v(202) + v(83) + v(84);
+  out.fgMiss = v(85) + v(84);
+  out.fgMiss0 = v(82) + v(81);
+  out.fgMiss40 = v(79) + v(78);
+  // one miss component covers 50+: the 50-59 rule when there is one, else the 60+ rule
+  out.fgMiss50 = v(76) + v(75) + (has(200) || has(199) ? v(200) + v(199) : v(203) + v(202));
+  out.sack = has(99) ? v(99) : 2 * v(100);
+  out.dInt = v(95);
+  out.fumRec = v(96);
+  out.safety = v(98);
+  out.blk = v(97);
+  // defensive TDs: one rule (94) plus the interception (103) / fumble (104) return TD rules (the model doesn't split
+  // them, so their average); return TDs: the average of the kickoff (101), punt (102) and blocked-kick (93) return
+  // rules the league has; "total return TD" (105) counts for both
+  const avg = (ids) => { const h = ids.filter(has); return h.length ? h.reduce((s, id) => s + v(id), 0) / h.length : 0; };
+  out.dTd = v(94) + avg([103, 104]) + v(105);
+  out.stTd = avg([101, 102, 93]) + v(105);
+  out.ptsAllowed = v(120) + v(187);
+  out.ydsAllowed = v(127);
+  out.paTier = ESPN_PA_TIERS.map((id, i) => v(id) + v(ESPN_DPA_TIERS[i]));
+  out.yaTier = ESPN_YA_TIERS.map((id) => v(id));
   return out;
 }
 

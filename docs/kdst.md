@@ -43,8 +43,13 @@ game environment (`env_shrink`).
 **Scoring.** ESPN standard (support.espn.com "Scoring Formats", plus the yards-allowed tiers of ESPN's default leagues):
 PAT 1, FG 0–39 3, 40–49 4, 50–59 5, 60+ 6, any miss −1; sack 1, INT 2, fumble recovery 2, safety 2, blocked kick 2,
 defensive or return TD 6, points allowed 5/4/3/1/0/0/−1/−3/−5, yards allowed 5/3/2/0/−1/−3/−5/−6/−7. `kdst.STANDARD`
-and the engine's `DEFAULT_SETTINGS.scoring` must agree (tested). An ESPN import reads each league's own rules (stat
-ids in `ESPN_KD_STATS`, tiers 89–92/121–125 and 128–136; 74 covers 60+ when the league has no 60+ rule).
+and the engine's `DEFAULT_SETTINGS.scoring` must agree (tested). An ESPN import reads each league's own rules
+(`parseKdScoring`). ESPN keeps most D/ST rules (sacks, takeaways, safeties, blocks, return TDs, points- and
+yards-allowed tiers) as an override on the D/ST lineup slot (`pointsOverrides["16"]`) with `points` 0, and
+kicker rules may sit on slot 17, so the slot's override comes first. Field goals 50–59 are stat 198 and 60+ 201 in
+current leagues (74 "50+" in older ones); points-allowed tiers are 89–92/121–125 or the D/ST versions 188–196;
+overlapping rules add up. Until Oct 20, 2026 the import read `points` only, so imported leagues scored D/ST on
+touchdowns alone and 50–59-yard field goals at 0 (re-import such a league; tests now use ESPN's real shape).
 
 ## How good it is (backtest, Oct 19, 2026)
 

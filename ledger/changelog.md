@@ -101,3 +101,13 @@ Asked for by the user: kickers and D/ST in the model. Notes in `docs/kdst.md`.
   (`data/backtest/kdst_champion.*`).
 - Tests: 16 (new: engine K/DST behaviour on a fixed build `tests/fixtures/db-kdst-w06.json`, builder output, the
   K/DST replay vs naive references).
+
+## 2026-10-20 — fix (user report): ESPN import of kicker and D/ST scoring; projections unchanged
+
+A league imported from ESPN showed the Chiefs D/ST at 0.7 and Will Reichard at 6.7 for Week 7. The model's
+projections were right (ESPN standard: 5.7 and 9.8); the import was not. ESPN keeps D/ST rules as an override on
+the D/ST lineup slot (`pointsOverrides["16"]`, `points` 0) and FG 50–59 as stat 198; `parseKdScoring` read
+`points` only and knew 74 (50+), so the league scored defenses on touchdowns alone and 50–59-yard kicks at 0.
+Now the slot override comes first, 198/199/200, 201–203, 75/78/81/84/87 and the D/ST points-allowed tiers
+188–196 are read, and overlapping rules add up. The test uses ESPN's real shape (fetched from the league). The
+saved league (espn-1647180066) had its K/DST rules corrected to the league's; other imported leagues: re-import.

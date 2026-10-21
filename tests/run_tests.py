@@ -362,6 +362,15 @@ def kdst_engine_behaves():
     s_ = e["scoring"]
     assert s_["fg60"] == s_["fg50"] == 5 and s_["dTd"] == 6 and s_["stTd"] == 6 and s_["fgMiss"] == -1
     assert s_["paTier"] == [10, 7, 0, 0, 0, 0, 0, 0, -4] and s_["yaTier"] == [5, 0, 0, 0, 0, 0, 0, 0, -7]
+    # ESPN's real shape: D/ST rules as slot-16 overrides with points 0, FG 50-59 as stat 198 (an ESPN-standard league
+    # without the PAT-miss rule must import as exactly that)
+    er = r["espnReal"]
+    want = dict(kdst.STANDARD, patMiss=0)
+    for k, v in er["scoring"].items():
+        assert v == want[k], f"ESPN import of {k}: {v}, the league's rule is {want[k]}"
+    assert er["ignored"] == 0
+    for pos in ("K", "DST"):
+        assert abs(er[pos]["imported"] - er[pos]["standard"]) < 0.1, f"{pos} under the imported rules {er[pos]}"
 
 
 @test
