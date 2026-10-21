@@ -53,6 +53,13 @@ H = the most recent completed regular season (e.g. 2026 in February 2027).
    (they check the simulated kicker and D/ST spreads stay near the box scores). The kicker and D/ST league
    constants themselves (rates, lines, distance mix) are refitted at every build from the history window, so
    nothing else is annual for them.
+7c. Waiver upside bank (`params/stash.json`, `docs/waivers.md`): from `work/`,
+   `python3 ../backtest/fetch_history.py <H−3> <H−2> <H−1> <H>` (brings two seasons more), then
+   `python3 ../waivers/stash_study.py frames --seasons <H−3>,<H−2>,<H−1>,<H>` (a minute a season; a season's frames
+   replay with the live parameters) and `python3 ../waivers/stash_study.py fit --write`. It prints the held-out checks;
+   keep the new bank only if the thinned bank's stash-zone rank correlation still beats the projection-only line and
+   the calibration holds (the test `stash_bank_is_sane` checks both); otherwise `git checkout -- ../params/stash.json`
+   and report.
 8. Commit on the branch ("Annual refit <year>: <what changed or 'no change'>"), merge into main
    (`git checkout main && git pull && git merge --no-ff annual-refit-<year>`), rerun the tests on main, push.
    On failure push the branch unmerged and report.

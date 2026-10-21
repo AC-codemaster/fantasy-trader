@@ -269,6 +269,11 @@ tr.swap-in td { background: var(--good-soft); }
 .pplay.low { color: var(--bad); } .pplay.mid { color: var(--warn); }
 .why { font-size: 12.5px; color: var(--muted); white-space: normal; }
 #panel-startsit .stack > *, #panel-startsit .box > *, #ssCalc, #ssMatch, #ssBoardBox, .ss-viz { min-width: 0; }
+#panel-waivers .stack > *, #panel-waivers .box > *, #wvBoard, #wvStanding { min-width: 0; }
+#panel-waivers .metric .wk-strip { margin: 4px 0 2px; }
+@media (max-width: 560px) { #panel-waivers .wv-x { display: none; } #panel-waivers td .sub { white-space: normal; } #panel-waivers td { padding: 6px 5px; }
+  #panel-waivers .wv-detail { grid-template-columns: minmax(0, 1fr); width: calc(100vw - 72px); }
+  #panel-waivers th { white-space: normal; padding: 6px 4px; font-size: 11px; } #panel-waivers .pname { white-space: normal; } }
 @media (max-width: 560px) { .ss-chart text { font-size: 19px; } }
 tr.locked td { opacity: .75; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -288,6 +293,7 @@ tr.locked td { opacity: .75; }
       <button role="tab" data-tab="trade" id="tab-trade">Trade</button>
       <button role="tab" data-tab="finder" id="tab-finder">Trade finder</button>
       <button role="tab" data-tab="startsit" id="tab-startsit">Start/Sit</button>
+      <button role="tab" data-tab="waivers" id="tab-waivers">Waivers</button>
       <button role="tab" data-tab="teams" id="tab-teams">Teams</button>
       <button role="tab" data-tab="players" id="tab-players">Players</button>
       <button role="tab" data-tab="league" id="tab-league">League</button>
@@ -300,6 +306,7 @@ tr.locked td { opacity: .75; }
   <section class="panel" id="panel-trade" role="tabpanel" aria-labelledby="tab-trade"></section>
   <section class="panel" id="panel-finder" role="tabpanel" aria-labelledby="tab-finder" hidden></section>
   <section class="panel" id="panel-startsit" role="tabpanel" aria-labelledby="tab-startsit" hidden></section>
+  <section class="panel" id="panel-waivers" role="tabpanel" aria-labelledby="tab-waivers" hidden></section>
   <section class="panel" id="panel-teams" role="tabpanel" aria-labelledby="tab-teams" hidden></section>
   <section class="panel" id="panel-players" role="tabpanel" aria-labelledby="tab-players" hidden></section>
   <section class="panel" id="panel-league" role="tabpanel" aria-labelledby="tab-league" hidden></section>
@@ -310,6 +317,7 @@ tr.locked td { opacity: .75; }
 
 <script type="application/json" id="db">{{DB}}</script>
 <script type="application/json" id="injnews">{{INJNEWS}}</script>
+<script type="application/json" id="stash">{{STASH}}</script>
 <!-- Weekly refresh: the builder script and runbook travel with the page (see the Method tab, section 7). -->
 <script type="text/plain" id="builder">{{BUILDER}}</script>
 <script type="text/plain" id="kdst">{{KDST}}</script>

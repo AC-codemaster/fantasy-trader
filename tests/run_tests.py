@@ -67,7 +67,7 @@ def page_assembles_and_matches_archived_engine():
     import make_page
     from scorecard import engine_from_page
     html = make_page.build(open(os.path.join(W5, "db.json")).read(), open(os.path.join(W5, "injury_news.json")).read())
-    for ph in ("{{DB}}", "{{ENGINE}}", "{{UI}}", "{{BUILDER}}", "{{KDST}}", "{{RUNBOOK}}", "{{PARAMS}}", "{{INJNEWS}}"):
+    for ph in ("{{DB}}", "{{ENGINE}}", "{{UI}}", "{{BUILDER}}", "{{KDST}}", "{{RUNBOOK}}", "{{PARAMS}}", "{{INJNEWS}}", "{{STASH}}"):
         assert ph not in html
     assert html.count("<script") == html.count("</script>"), "unbalanced script elements"
     eng, db_text, _ = engine_from_page(html)
@@ -432,6 +432,57 @@ def gameday_slots_cover_every_game_day():
     assert p["current"]["tag"] == "late-thu-am" and p["next"]["cron"] == "CRON_TZ=America/New_York 57 18 26 11 *", p
     p = gs.plan(S, datetime.fromisoformat("2027-01-10T11:40-05:00"))
     assert p["current"]["tag"] == "late-sun" and p["next"] is None, p
+
+
+@test
+def stash_bank_is_sane():
+    """The waiver upside bank (params/stash.json, waivers/stash_study.py): every offensive position, rows encoded
+    in the bank's alphabet, held-out breakout chances that match what happened, and a ranking of the stash zone
+    better than the projection alone."""
+    b = json.load(open(os.path.join(ROOT, "params", "stash.json")))
+    assert b["version"] >= 1 and set(b["rows"]) == {"QB", "RB", "WR", "TE"}, "bank positions"
+    ok = set(b["alpha"]) | {b["bye"]}
+    for pos, rows in b["rows"].items():
+        assert len(rows) >= 500, f"{pos}: only {len(rows)} rows"
+        bad = [r for r in rows if len(r) < 5 or not set(r) <= ok]
+        assert not bad, f"{pos}: {len(bad)} malformed rows, e.g. {bad[0]!r}"
+    c = b["checks"]
+    for x in c["calibration"]:
+        if x["n"] >= 300:
+            assert abs(x["pred"] - x["actual"]) <= max(0.03, 0.15 * x["actual"]), f"breakout chance off: {x}"
+    th, base = c["thinned"], c["baseline"]
+    assert th["rank_corr_zone"] > base["rank_corr_zone"] + 0.02, f"the bank doesn't rank the stash zone better: {th} vs {base}"
+    assert th["logloss"] < c["baseline"]["logloss_base_rate"], "breakout chance no better than a flat rate"
+
+
+@test
+def waiver_engine_behaves():
+    """The Waivers tab on a fixed build: a pickup's value on his projection equals the change in teamValue with him
+    on the roster; the season simulation's title chances add up to one and playoff spots to the field; an unbeaten
+    team's playoff weeks count far more than a winless team's; every weighting keeps the trade tool's total; more
+    bench spots mean more room and never a shorter hold; scenarios for every offensive free agent; fast enough."""
+    with tempfile.TemporaryDirectory() as td:
+        ep = os.path.join(td, "e.js")
+        open(ep, "w").write(engine_source())
+        r = node(os.path.join(ROOT, "tests", "waiver_checks.js"), ep, KD_DB, os.path.join(ROOT, "params", "stash.json"))
+    assert r["bank"]["badLevel"] == 0 and set(r["bank"]["pos"]) == {"QB", "RB", "WR", "TE"}, r["bank"]
+    assert r["rows"] >= 30, f"only {r['rows']} rows on the board"
+    t = r["tie"]
+    assert t["n"] >= 5 and t["maxDiff"] < 0.25, f"board value vs teamValue: {t}"
+    o = r["odds"]
+    assert abs(o["sumTitle"] - 1) < 1e-6 and abs(o["sumPlayoffs"] - o["field"]) < 1e-6, f"season simulation totals {o}"
+    lv = r["leverage"]
+    assert lv["unbeaten"] > 2 * lv["winless"], f"standings weights: playoff/regular-week ratio {lv}"
+    for m, x in r["weights"].items():
+        assert abs(x - r["wSum"]) < 1e-6, f"{m} weights total {x}, trade tool {r['wSum']}"
+    rm = r["room"]
+    assert rm["room"] == rm["open"] + rm["dead"] and rm["roomMore"] == rm["openMore"] + rm["deadMore"], rm
+    assert rm["openMore"] > rm["open"] and rm["roomMore"] > rm["room"] and rm["holdsNotShorter"], rm
+    u = r["upside"]
+    assert u["withScen"] == u["offRows"] and u["oddsOk"] and u["contAbove"] and u["backups"] >= 3, u
+    assert u["meanUpsideTop10"] > 1, f"the most upside on the board is tiny: {u}"
+    assert r["ms"] < 4000, f"board took {r['ms']} ms"
+
 
 
 if __name__ == "__main__":

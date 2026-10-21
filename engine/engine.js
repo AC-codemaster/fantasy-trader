@@ -30,6 +30,9 @@ const DEFAULT_SETTINGS = {
   waiverDepth: 2,     // 1 = you get the best free agent each week, 2 = second best, ...
   faab: false,        // league uses a free agent acquisition budget
   faabBudget: 100,    // each team's starting budget
+  bench: 7,           // bench spots (roster size = starting slots + bench); IR slots don't count
+  ir: 1,              // injured-reserve slots
+  playoffTeams: null, // teams that make the playoffs (null: 4 in leagues of up to 10 teams, else 6)
   // what managers look at when they size up a player (relative weights)
   perc: { season: 0.2, form: 0.15, prk: 0.1, track: 0.2, adp: 0.15, rost: 0.1, start: 0.15, espn: 0.15, experts: 0.15, news: 0.15 },
   proven: 0.15,       // trade-value premium managers pay for a player with a long, good track record (certainty)
@@ -263,7 +266,7 @@ function usageModel(DB, L) {
   const isOut = (o, w) => o != null && w <= o;
   // short absence: not on a reserve list, and back within two weeks of now
   const shortOut = (p, o) => o != null && o - cur <= 1 && !(p.ij && p.ij.thru === o && RESERVE_RE.test(p.ij.st || ""));
-  const res = new Map(), opp0 = new Map(), den0 = new Map();
+  const res = new Map(), opp0 = new Map(), den0 = new Map(), den0p = new Map();
   for (const [tm, ps] of byTeam) {
     const T = teams[tm];
     if (!T) { for (const p of ps) res.set(p.id, { now: new Float64Array(nW), ecr: new Float64Array(nW), full: 0, avail: new Array(nW).fill(false) }); continue; }
@@ -319,6 +322,8 @@ function usageModel(DB, L) {
         now[wi] = sharePts(p, T, a[0] + addA * p.m[0], a[1] + addA * p.m[1], a[2] + (isOut(on, w) ? p.m[2] : 0), sc, fa, env[wi]);
         // this week's expected carries, targets and attempts (same split as above): the start/sit simulation's inputs
         if (wi === 0) opp0.set(p.id, shareOpp(p, T, a[0] + addA * p.m[0], a[1] + addA * p.m[1], a[2] + (isOut(on, w) ? p.m[2] : 0), fa, env[wi]));
+        // ...and the pools' denominators behind them (the waiver tab's contingent role starts from these)
+        if (wi === 0) den0p.set(p.id, [a[0] + addA * p.m[0], a[1] + addA * p.m[1], a[2] + (isOut(on, w) ? p.m[2] : 0), fa]);
         ecr[wi] = sharePts(p, T, e[0] + addE * p.m[0], e[1] + addE * p.m[1], e[2] + (isOut(oe, w) ? p.m[2] : 0), sc, fe, env[wi]);
         // everyone healthy, same game environment and his own first-game-back factor: the yardstick for role changes
         fullW[wi] = sharePts(p, T, full[0] - (1 - fa) * p.m[0], full[1] - (1 - fa) * p.m[1], full[2] - (1 - fa) * p.m[2], sc, fa, env[wi]);
@@ -328,7 +333,7 @@ function usageModel(DB, L) {
     }
   }
   kdModel(DB, L, weeks, outNow, res);
-  return { weeks, res, byTeam, outNow, opp0, den0 };
+  return { weeks, res, byTeam, outNow, opp0, den0, den0p };
 }
 
 /*
@@ -1931,6 +1936,464 @@ function needCalc(ctx, cands, opts = {}) {
   });
 }
 
+/* ---------------- Waivers: the best pickups for one team, and what each is worth to it ---------------- */
+/*
+ * A free agent is worth what he adds to your starting lineups, week by week, against the player you'd drop for him.
+ * On top of his projection he carries an option: if his role grows (the starter ahead of him gets hurt, he wins the
+ * job, his team trades someone) you keep him and start him; if it doesn't, he costs a bench spot and you drop him
+ * when you need it. Because you only start him in the weeks he's good, the upside counts and the downside doesn't,
+ * which a projection alone can't price.
+ *
+ * The upside comes from the stash bank (params/stash.json, built by waivers/stash_study.py): every past player who
+ * could have been on waivers (2022-25, the projection model replayed at each week), with his projection in every
+ * later week relative to the weekly-starter line (the 12th QB, 24th RB, 30th WR, 12th TE that week). A free agent's
+ * scenarios are the paths of the 60 most similar past players (same position; projection and contingent role relative
+ * to the line; week of the season; rookie or not), laid onto his own weekly projection: week by week, his projection
+ * moves by as many lines as theirs did. Held-out seasons: the chance the bank gives of projecting as a weekly
+ * starter within four weeks matches what happened at every level, and it ranks the stash zone's future value better
+ * than the projection does (rank correlation .28 vs .22).
+ *
+ * What decides whether you can afford to wait for the upside:
+ *  - which weeks matter to you ("standings" weights, the default): every remaining week counts by how much a point
+ *    that week moves your chance to win the title (seasonOdds), so a team that's safely in counts its playoff weeks
+ *    most and a team fighting for a spot counts the next few weeks most. The weights are scaled to the same total as
+ *    the trade tool's, so values stay in rest-of-season points;
+ *  - how long you can hold him: your open spots and the players adding nothing to your lineups are the room you
+ *    stream from. The first week the pickup leaves your lineup a fill-in short (byes, injuries) that you could have
+ *    covered without him, a stash who hasn't become a keeper goes, judged on what you'd know then (his projection at
+ *    that point carried forward, not his future); one you keep costs that fill-in.
+ */
+const STASH_LINE = { QB: 12, RB: 24, WR: 30, TE: 12 };
+const DEAD_PTS = 1;          // a rostered player adding less than this to your lineups the rest of the season is free to drop
+const _wp = new Int8Array(64), _wv = new Float64Array(64), _ws = new Uint8Array(64);
+let _stashSrc = null, _stashDec = null;
+
+/* The bank, decoded once: per position, typed arrays of each row's features and its path (NaN on byes). */
+function stashDecode(bank) {
+  if (!bank || !bank.rows) return null;
+  if (_stashSrc === bank) return _stashDec;
+  const A = bank.alpha, step = bank.step, r0 = bank.rel0Step || 0.02, thin = [1].concat(bank.thin || []), ix = {};
+  for (let i = 0; i < A.length; i++) ix[A[i]] = i;
+  const out = {};
+  for (const pos of Object.keys(bank.rows)) {
+    const rows = bank.rows[pos], n = rows.length;
+    const B = { n, week: new Int8Array(n), rel0: new Float32Array(n), relc: new Float32Array(n), rookie: new Uint8Array(n),
+      b4: new Uint8Array(n), wt: new Float32Array(n), path: new Array(n) };
+    for (let i = 0; i < n; i++) {
+      const s = rows[i], f = ix[s[3]];
+      B.week[i] = ix[s[0]]; B.rel0[i] = ix[s[1]] * r0; B.relc[i] = ix[s[2]] * step;
+      B.rookie[i] = f & 1; B.b4[i] = (f >> 1) & 1; B.wt[i] = thin[f >> 2] || 1;
+      const p = new Float32Array(s.length - 4);
+      for (let k = 4; k < s.length; k++) p[k - 4] = s[k] === bank.bye ? NaN : ix[s[k]] * step;
+      B.path[i] = p;
+    }
+    out[pos] = B;
+  }
+  _stashSrc = bank; _stashDec = out;
+  return out;
+}
+
+/* The weekly-starter line at each position for each remaining week, in this league's scoring: the bank's unit. */
+function starterLines(ctx, bank) {
+  if (ctx._lines) return ctx._lines;
+  const N = (bank && bank.startN) || STASH_LINE, out = {};
+  for (const pos of OFF_POS) {
+    const ps = ctx.DB.players.filter((p) => p.p === pos);
+    out[pos] = ctx.weeks.map(({ w }, wi) => {
+      const v = ps.filter((p) => available(ctx, p.id, w)).map((p) => ctx.wkA.get(p.id)[wi]).sort((a, b) => b - a);
+      return v.length ? Math.max(0.5, v[Math.min(N[pos], v.length) - 1]) : 1;
+    });
+  }
+  ctx._lines = out;
+  return out;
+}
+
+/* His projection this week (as if he plays) if the best teammate at his position ahead of him were out: that
+   teammate's work goes to the others as in a short absence (DAMP of it to depth players; a QB's attempts in full).
+   The same contingent role the bank was built on. */
+function contingent(ctx, id) {
+  const U = ctx.val.usage, p = ctx.byId.get(id);
+  if (!U || !U.den0p || !p || !p.m) return null;
+  const T = (ctx.DB.teams || {})[p.t], r = U.res.get(id), d = U.den0p.get(id);
+  if (!T || !r || !d) return null;
+  let j = null, jv = r.now[0];
+  for (const q of U.byTeam.get(p.t) || []) {
+    if (q.id === id || q.p !== p.p) continue;
+    const rq = U.res.get(q.id);
+    if (rq && rq.avail[0] && rq.now[0] > jv) { j = q; jv = rq.now[0]; }
+  }
+  if (!j) return { pts: r.now[0], base: r.now[0], who: null };
+  const fj = U.res.get(j.id).back[0], k = 1 - DAMP;
+  const pts = sharePts(p, T, Math.max(1e-9, d[0] - k * j.m[0] * fj), Math.max(1e-9, d[1] - k * j.m[1] * fj),
+    Math.max(1e-9, d[2] - j.m[2] * fj), ctx.S.scoring, d[3], r.env ? r.env[0] : null);
+  return { pts, base: r.now[0], who: j.id };
+}
+
+/*
+ * A free agent's scenarios: the paths of the most similar past players in the bank, laid onto his own projection.
+ * Returns { w (weights), lv (levels by remaining week, one array per scenario), dl (moves in starter lines), odds
+ * (chance he projects as a weekly starter within the bank's horizon), rel0, relc, cont } or null (no bank, kickers
+ * and defenses, out for the season).
+ */
+function stashScenarios(ctx, bank, id) {
+  const D = stashDecode(bank), p = ctx.byId.get(id);
+  if (!D || !p || !D[p.p]) return null;
+  const B = D[p.p], v = ctx.val.get(id), a = ctx.wkA.get(id), nW = ctx.weeks.length, L = starterLines(ctx, bank)[p.p];
+  const avail = ctx.weeks.map(({ w }) => available(ctx, id, w));
+  // out now: his scenarios start the week he's back
+  const o = effOut(ctx.L, p, +ctx.S.curWeek);
+  const t0 = o != null ? ctx.weeks.findIndex((x) => x.w > o) : 0;
+  if (t0 < 0) return null;
+  const cg = contingent(ctx, id);
+  const corr = v && v.modelWeekly ? a[0] - v.modelWeekly[0] : 0;    // his expert correction rides along with the contingent role
+  const L0 = L[t0] > 0 ? L[t0] : 1;
+  const rel0 = Math.max(0, a[t0]) / L0, relc = cg ? Math.max(0, cg.pts + corr) / L0 : rel0;
+  const rookie = (+p.g25 || 0) > 0 || (+p.g24 || 0) > 0 ? 0 : 1;
+  const F = bank.feats || {}, K = bank.k || 60, wk = ctx.weeks[t0].w, need = nW - t0;
+  const sr = F.rel0 || 0.06, sc = F.relc || 0.15, sw = F.week || 4, sk = F.rookie || 0.5;
+  let cand = [];
+  const pass = (minLen) => {
+    cand = [];
+    for (let i = 0; i < B.n; i++) {
+      if (B.path[i].length < minLen) continue;
+      const d2 = ((B.rel0[i] - rel0) / sr) ** 2 + ((B.relc[i] - relc) / sc) ** 2 + ((B.week[i] - wk) / sw) ** 2 + ((B.rookie[i] - rookie) / sk) ** 2;
+      cand.push([d2, i]);
+    }
+  };
+  pass(need);
+  if (cand.length < K) pass(0);      // too few long paths: shorter ones carry their last move forward
+  cand.sort((x, y) => x[0] - y[0]);
+  cand.length = Math.min(K, cand.length);
+  const w = new Float64Array(cand.length), lv = [], dl = [];
+  let ws = 0, odds = 0;
+  cand.forEach(([d2, i], j) => {
+    w[j] = Math.exp(-0.5 * d2) * B.wt[i];
+    ws += w[j];
+    const P = B.path[i], base = B.rel0[i], l = new Float64Array(nW), dd = new Float64Array(nW);
+    let last = 0;
+    for (let t = t0; t < nW; t++) {
+      const k = t - t0;
+      if (k < P.length && !Number.isNaN(P[k])) last = P[k] - base;
+      dd[t] = last;
+      l[t] = avail[t] ? Math.max(0, a[t] + last * L[t]) : 0;
+    }
+    lv.push(l); dl.push(dd);
+  });
+  if (!(ws > 0)) { w.fill(1); ws = w.length; }
+  for (let j = 0; j < w.length; j++) { w[j] /= ws; odds += w[j] * B.b4[cand[j][1]]; }
+  return { w, lv, dl, odds, rel0, relc, cont: cg, t0, n: cand.length, rookie };
+}
+
+/*
+ * Season simulation for the "standings" weights: the rest of the regular season (the ESPN schedule when imported,
+ * otherwise random pairings), seeding by wins then points, and the playoff bracket (top seeds get byes when the field
+ * isn't a power of two). Each team-week scores its projected lineup plus noise (sd = cv x the league's average
+ * lineup). lev[wi] is how much your title chance rises per point you add in that week, measured by adding half a
+ * standard deviation to your score that week in the same simulated seasons (common random numbers).
+ */
+function seasonOdds(ctx, mine, opts = {}) {
+  ctx = ctx.root || ctx;
+  const S = ctx.S, L = ctx.L;
+  const teams = L.teams.filter((t) => t.roster && t.roster.length);
+  const me = teams.indexOf(mine);
+  if (teams.length < 4 || me < 0 || !ctx.weeks.length) return null;
+  const nT = teams.length, wk = ctx.weeks.map((x) => x.w), nW = wk.length, ps = +S.playoffStart, last = +S.lastWeek;
+  const mu = teams.map((t) => { const d = teamDepth(ctx, t); return wk.map((w) => lineupForWeek(ctx, t.roster, "a", w, d).total); });
+  let avg = 0;
+  for (const r of mu) for (const x of r) avg += x;
+  avg /= nT * nW;
+  const sd = Math.max(1, (opts.cv || 0.18) * avg);
+  const wins0 = teams.map((t) => (+t.wins || 0) + 0.5 * (+t.ties || 0)), pf0 = teams.map((t) => +t.pf || 0);
+  const ix = new Map(teams.map((t, i) => [t.id, i]));
+  const sch = (L.espn && L.espn.schedule) || [];
+  const reg = [], po = [];
+  wk.forEach((w, wi) => (w < ps ? reg : po).push(wi));
+  const pairs = reg.map((wi) => {
+    const m = sch.filter((x) => +x.w === wk[wi] && ix.has(x.h) && ix.has(x.a)).map((x) => [ix.get(x.h), ix.get(x.a)]);
+    return m.length >= Math.floor(nT / 2) ? m : null;
+  });
+  const nPO = Math.max(2, Math.min(nT, +S.playoffTeams || (nT <= 10 ? 4 : 6)));
+  const R = Math.ceil(Math.log2(nPO)), byes = (1 << R) - nPO;
+  const len = Math.max(1, Math.floor(Math.max(1, last - ps + 1) / R));
+  const roundOf = (wi) => Math.min(R - 1, Math.floor((wk[wi] - ps) / len));
+  if (wk[0] >= ps && !po.length) return null;
+  const N = opts.n || 2500, rng = makeRng(opts.seed || 2027);
+  const Z = new Float32Array(N * nT * nW);
+  for (let i = 0; i < Z.length; i++) Z[i] = rng.normal();
+  const nR = reg.length, perm = new Int8Array(N * Math.max(1, nR) * nT);
+  for (let s = 0; s < N; s++) for (let r = 0; r < nR; r++) {
+    const o = (s * nR + r) * nT;
+    for (let i = 0; i < nT; i++) perm[o + i] = i;
+    for (let i = nT - 1; i > 0; i--) { const j = Math.floor(rng.u() * (i + 1)); const t = perm[o + i]; perm[o + i] = perm[o + j]; perm[o + j] = t; }
+  }
+  const sc = new Float64Array(nT * nW), rs = new Float64Array(nT * R), wins = new Float64Array(nT), pf = new Float64Array(nT);
+  const order = Array.from({ length: nT }, (_, i) => i);
+  const run = (bw, bump) => {
+    let made = 0, champ = 0;
+    for (let s = 0; s < N; s++) {
+      const z = s * nT * nW;
+      for (let i = 0; i < nT; i++) {
+        wins[i] = wins0[i]; pf[i] = pf0[i];
+        for (let wi = 0; wi < nW; wi++) sc[i * nW + wi] = mu[i][wi] + sd * Z[z + i * nW + wi] + (i === me && wi === bw ? bump : 0);
+      }
+      for (let r = 0; r < nR; r++) {
+        const wi = reg[r];
+        const game = (a, b) => { const x = sc[a * nW + wi], y = sc[b * nW + wi]; if (x > y) wins[a]++; else if (y > x) wins[b]++; else { wins[a] += 0.5; wins[b] += 0.5; } };
+        if (pairs[r]) for (const [a, b] of pairs[r]) game(a, b);
+        else { const o = (s * nR + r) * nT; for (let i = 0; i + 1 < nT; i += 2) game(perm[o + i], perm[o + i + 1]); }
+        for (let i = 0; i < nT; i++) pf[i] += sc[i * nW + wi];
+      }
+      const seed = order.slice().sort((a, b) => wins[b] - wins[a] || pf[b] - pf[a]).slice(0, nPO);
+      const mySeed = seed.indexOf(me);
+      if (mySeed < 0) continue;
+      made++;
+      rs.fill(0);
+      for (const wi of po) { const r = roundOf(wi); for (let i = 0; i < nT; i++) rs[i * R + r] += sc[i * nW + wi]; }
+      // bracket by seed: round 1 without the byes, then highest seed left against the lowest, and so on
+      let field = seed.slice(byes), rest = seed.slice(0, byes), alive = true;
+      for (let r = 0; r < R && alive; r++) {
+        const next = [];
+        for (let i = 0, j = field.length - 1; i < j; i++, j--) {
+          const a = field[i], b = field[j], x = rs[a * R + r], y = rs[b * R + r];
+          next.push(y > x ? b : a);   // a tie goes to the higher seed
+        }
+        if (field.length % 2) next.push(field[field.length >> 1]);
+        field = rest.concat(next).sort((a, b) => seed.indexOf(a) - seed.indexOf(b));
+        rest = [];
+        alive = field.includes(me);
+      }
+      if (alive && field.length === 1) champ++;
+    }
+    return { made, champ };
+  };
+  const base = run(-1, 0), d = 0.5 * sd, lev = new Float64Array(nW);
+  for (let wi = 0; wi < nW; wi++) lev[wi] = Math.max(0, run(wi, d).champ - base.champ) / (N * d);
+  return { lev, pPlayoffs: base.made / N, pTitle: base.champ / N, champ: base.champ, n: N, sd, avg, nPO, byes, rounds: R,
+    schedule: nR > 0 && pairs.every(Boolean), teams: nT };
+}
+
+/* How much each remaining week counts, scaled to the trade tool's total (ctx.wSum). Modes: "auto" (your title chances,
+   from seasonOdds, blended with the even weights in proportion to how much signal the simulation has), "even" (every
+   week the same, playoff weeks at the league's playoff weight), "now" (the next few weeks), "playoffs". */
+function waiverWeights(ctx, mine, mode, odds) {
+  const def = ctx.weeks.map((x) => x.wt), sum = ctx.wSum, ps = +ctx.S.playoffStart;
+  const norm = (arr) => { const s = arr.reduce((x, y) => x + y, 0); return s > 0 ? arr.map((x) => (x * sum) / s) : def.slice(); };
+  if (mode === "even") return { w: def.slice(), mode };
+  if (mode === "now") return { w: norm(def.map((x, i) => x * Math.pow(0.6, i))), mode };
+  if (mode === "playoffs") return { w: norm(ctx.weeks.map(({ w, wt }) => (w >= ps ? wt : 0.25 * wt))), mode };
+  const o = odds === undefined ? seasonOdds(ctx, mine) : odds;
+  if (!o) return { w: def.slice(), mode: "even", fallback: true };
+  const lam = Math.min(0.75, o.champ / 150);
+  const lw = norm(Array.from(o.lev));
+  return { w: lw.map((x, i) => lam * x + (1 - lam) * def[i]), mode: "auto", odds: o, lam };
+}
+
+function rosterSize(S) {
+  let n = 0;
+  for (const k of SLOT_ORDER) n += +S.slots[k] || 0;
+  return n + (S.bench == null ? DEFAULT_SETTINGS.bench : +S.bench);
+}
+/* Players in IR slots (they don't take a bench spot): ESPN's slot when imported, otherwise players on a reserve list. */
+function irSlotted(ctx, team) {
+  const ext = (ctx.L.espn && ctx.L.espn.players) || {}, out = new Set();
+  const n = ctx.S.ir == null ? DEFAULT_SETTINGS.ir : +ctx.S.ir;
+  const imported = team.roster.some((id) => ext[id] && ext[id].slot != null);
+  for (const id of team.roster) {
+    if (out.size >= n) break;
+    const p = ctx.byId.get(id);
+    if (imported ? ext[id] && ext[id].slot === 21 : p && p.ij && RESERVE_RE.test(p.ij.st || "")) out.add(id);
+  }
+  return out;
+}
+
+/*
+ * The waiver board for one team. opts: bank (the stash bank), mode (week weights: auto | even | now | playoffs),
+ * odds (a seasonOdds result to reuse), pos (only this position), limit (rows returned, default 60), streamNow (count a
+ * free streamer this week too, as teamValue does: the tests use it to tie the two together).
+ * Each row: id, pos, drop (who goes, null for an open spot), now (points he adds to this week's lineup), proj (his
+ * value on his projection alone), exp (with his scenarios), upside (exp - proj), p10/p90 (scenario range of the value),
+ * odds (chance he projects as a weekly starter within 4 weeks), hold (week index you'd have to decide by, or nW),
+ * keepCost, fan (per-week 10th/50th/90th percentile of his projection), cont (contingent role). Values are in
+ * rest-of-season lineup points, each week weighted.
+ */
+function waiverBoard(ctx, mine, opts = {}) {
+  ctx = ctx.root || ctx;
+  const S = ctx.S, nW = ctx.weeks.length, bank = opts.bank || null;
+  if (!mine || !nW) return null;
+  const t00 = Date.now();
+  const W = waiverWeights(ctx, mine, opts.mode || "auto", opts.odds), w = W.w;
+  const dep = teamDepth(ctx, mine), wv = wvFor(ctx, dep);
+  const roster = mine.roster.filter((id) => ctx.byId.has(id)).slice(0, 56);
+  const ir = irSlotted(ctx, mine), size = rosterSize(S);
+  const open = Math.max(0, size - (roster.length - ir.size));
+  // each week: your available players and the streamers, sorted by points (what teamValue sees)
+  const base = [];
+  for (let wi = 0; wi < nW; wi++) {
+    const arr = [];
+    roster.forEach((id, k) => { const x = info(ctx, id); if (x && x.code.a[wi] >= 0) arr.push({ k, pc: x.pc, v: x.pts.a[wi], s: 0 }); });
+    for (const x of wv) arr.push({ k: -1, pc: x.pc, v: x.pts.a[wi], s: 1 });
+    arr.sort((a, b) => b.v - a.v);
+    base.push(arr);
+  }
+  // the week's players without dk, with the pickup at v; sv: the streamer level at his position once he's off the
+  // wire (NaN: unchanged). Sorted by points, as lineupFast expects.
+  // This week has no free streamer: this week's waiver move is the decision being made, so a pickup is measured
+  // against the lineup you have. Later weeks keep the streamers (the moves you'll make then).
+  const now0 = !opts.streamNow;
+  const fill = (wi, dk, pc, v, sv, all = false) => {
+    let n = 0;
+    const put = (a, b, c) => { let j = n++; while (j > 0 && _wv[j - 1] < b) { _wp[j] = _wp[j - 1]; _wv[j] = _wv[j - 1]; _ws[j] = _ws[j - 1]; j--; } _wp[j] = a; _wv[j] = b; _ws[j] = c; };
+    const noStream = !all && wi === 0 && now0;
+    for (const e of base[wi]) {
+      if (dk >= 0 && e.k === dk) continue;
+      if (e.s && noStream) continue;
+      put(e.pc, e.s && e.pc === pc && !Number.isNaN(sv) ? sv : e.v, e.s);
+    }
+    if (pc >= 0) put(pc, v, 0);
+    return n;
+  };
+  const cache = new Map();
+  // cached by week, drop, position and both levels to 1/16 of a point
+  const ev = (wi, dk, pc, v, sv = NaN) => {
+    const q = Math.max(0, Math.min(16383, Math.round(v * 16))), q2 = Number.isNaN(sv) ? 16383 : Math.max(0, Math.min(16382, Math.round(sv * 16)));
+    const key = (((wi * 64 + dk + 1) * 8 + pc + 1) * 16384 + q) * 16384 + q2;
+    let e = cache.get(key);
+    if (e === undefined) { const n = fill(wi, dk, pc, q / 16, q2 === 16383 ? NaN : q2 / 16); e = weekEV(_wp, _wv, n, S.slots, S.cushion); cache.set(key, e); }
+    return e;
+  };
+  // fill-ins: streamers in that week's lineup, and what losing the cheapest of them costs
+  const holes = (wi, dk, pc, v, sv = NaN) => {
+    const n = fill(wi, dk, pc, Math.round(v * 16) / 16, Number.isNaN(sv) ? NaN : Math.round(sv * 16) / 16, true);
+    const [tot, k] = lineupFast(_wp, _wv, n, -1, S.slots);
+    const used = [];
+    for (let i = 0; i < k; i++) used.push(_st[i]);
+    let h = 0, loss = Infinity;
+    for (const i of used) if (_ws[i]) { h++; const l = tot - lineupFast(_wp, _wv, n, i, S.slots)[0]; if (l < loss) loss = l; }
+    return { h, loss: h ? loss : 0 };
+  };
+  const ev0 = new Float64Array(nW), h0 = new Int32Array(nW);
+  for (let wi = 0; wi < nW; wi++) { ev0[wi] = ev(wi, -1, -1, 0); h0[wi] = holes(wi, -1, -1, 0).h; }
+  // what each of your players adds to your lineups the rest of the season (the cost of dropping him)
+  const dropCost = roster.map((id, k) => { let s = 0; for (let wi = 0; wi < nW; wi++) s += w[wi] * (ev0[wi] - ev(wi, k, -1, 0)); return s; });
+  const dead = roster.map((id, k) => !ir.has(id) && dropCost[k] < DEAD_PTS);
+  const room = open + dead.filter(Boolean).length;
+  const drops = open > 0 ? [-1] : roster.map((id, k) => k).filter((k) => !ir.has(roster[k])).sort((a, b) => dropCost[a] - dropCost[b]).slice(0, 4);
+  // holding him: the first week he leaves you a fill-in short that you'd otherwise have covered, and what keeping
+  // him past it costs (that fill-in, each week it's short)
+  const holdFor = (pc, lv, dk, sv) => {
+    const roomX = dk < 0 || dead[dk] ? room - 1 : room;
+    let H = nW, cost = 0;
+    for (let wi = 0; wi < nW; wi++) {
+      const hx = holes(wi, dk, pc, lv[wi], sv[wi]);
+      const extra = Math.max(0, hx.h - roomX) - Math.max(0, h0[wi] - room);
+      if (extra > 0) { if (H === nW) H = wi; cost += w[wi] * extra * hx.loss; }
+    }
+    return { H, cost, room: roomX };
+  };
+  // value of a path of levels; past the hold week he stays only if he's worth his spot on what you'd know then
+  const valueOf = (pc, a, avail, lv, dl, dk, hold, L, sv) => {
+    let tot = 0, after = 0;
+    for (let wi = 0; wi < nW; wi++) {
+      const g = w[wi] * (ev(wi, dk, pc, lv[wi], sv[wi]) - ev0[wi]);
+      if (wi < hold.H) tot += g; else after += g;
+    }
+    if (hold.H >= nW) return tot;
+    let cont = 0;
+    const dH = dl ? dl[hold.H] : 0;
+    for (let wi = hold.H; wi < nW; wi++) {
+      const x = avail[wi] ? Math.max(0, a[wi] + dH * (L ? L[wi] : 0)) : 0;
+      cont += w[wi] * (ev(wi, dk, pc, x, sv[wi]) - ev0[wi]);
+    }
+    return cont > hold.cost ? tot + after - hold.cost : tot;
+  };
+  // the free agents worth a look
+  const lines = bank ? starterLines(ctx, bank) : null;
+  const mineSet = new Set(roster);
+  let pool = ctx.pool.filter((p) => !mineSet.has(p.id) && !ctx.rostered.has(p.id) && (!opts.pos || p.p === opts.pos));
+  const avOf = (id) => ctx.weeks.map(({ w: wk }) => available(ctx, id, wk));
+  const kd = {};
+  pool = pool.filter((p) => {
+    const av = avOf(p.id);
+    if (!av.some(Boolean)) return false;
+    if (KD_POS.includes(p.p)) { (kd[p.p] = kd[p.p] || []).push(p); return false; }
+    const a = ctx.wkA.get(p.id), Lp = lines ? lines[p.p] : null;
+    const best = Math.max(...a.map((x, i) => (av[i] ? x : 0)));
+    return Lp ? best >= 0.15 * Lp[0] : best >= 2;
+  });
+  for (const pos of Object.keys(kd)) pool = pool.concat(kd[pos].sort((x, y) => ctx.ppg.a.get(y.id) - ctx.ppg.a.get(x.id)).slice(0, 8));
+  // the streamer level at his position each week once he's off the wire: he is one of the free agents the streamers
+  // stand for, so rostering him leaves the next one (same depth and interpolation as streamLevels)
+  const svOf = (p, a, avail) => {
+    const out = new Float64Array(nW).fill(NaN), lists = ctx.waiverList.a[p.p];
+    if (S.waiver === false || !lists) return out;
+    const i = Math.floor(dep), f = dep - i;
+    for (let wi = 0; wi < nW; wi++) {
+      const l = lists[wi], j = l && avail[wi] ? l.indexOf(a[wi]) : -1;
+      if (j < 0) continue;
+      const l2 = l.slice(0, j).concat(l.slice(j + 1));
+      if (!l2.length) { out[wi] = 0; continue; }
+      const x = l2[Math.min(i, l2.length) - 1], y = l2[Math.min(i + 1, l2.length) - 1];
+      out[wi] = Math.round((x + f * (y - x)) * 100) / 100;
+    }
+    return out;
+  };
+  const rows = [];
+  for (const p of pool) {
+    const pc = POS_CODE[p.p], a = ctx.wkA.get(p.id), avail = avOf(p.id), sv = svOf(p, a, avail);
+    const lv = new Float64Array(nW);
+    for (let wi = 0; wi < nW; wi++) lv[wi] = avail[wi] ? Math.max(0, a[wi]) : 0;
+    let best = null;
+    for (const dk of drops) {
+      const hold = holdFor(pc, lv, dk, sv);
+      const v = valueOf(pc, a, avail, lv, null, dk, hold, null, sv);
+      if (!best || v > best.v) best = { dk, v, hold };
+    }
+    const { dk, hold } = best;
+    const row = { id: p.id, pos: p.p, drop: dk >= 0 ? roster[dk] : null, now: ev(0, dk, pc, lv[0], sv[0]) - ev0[0], proj: best.v, exp: best.v,
+      upside: 0, p10: best.v, p90: best.v, odds: null, hold: hold.H, keepCost: hold.cost, room: hold.room, cont: null, fan: null, n: 0 };
+    const sc = bank && OFF_POS.includes(p.p) ? stashScenarios(ctx, bank, p.id) : null;
+    if (sc && sc.n) {
+      const L = lines[p.p], vals = new Float64Array(sc.n);
+      let e = 0;
+      for (let j = 0; j < sc.n; j++) { vals[j] = valueOf(pc, a, avail, sc.lv[j], sc.dl[j], dk, hold, L, sv); e += sc.w[j] * vals[j]; }
+      const q = (arr, qq) => { const ord = Array.from(arr.keys()).sort((x, y) => arr[x] - arr[y]); let c = 0; for (const j of ord) { c += sc.w[j]; if (c >= qq) return arr[j]; } return arr[ord[ord.length - 1]]; };
+      row.exp = e; row.upside = e - best.v; row.p10 = q(vals, 0.1); row.p90 = q(vals, 0.9); row.odds = sc.odds; row.n = sc.n;
+      row.rel0 = sc.rel0; row.relc = sc.relc; row.cont = sc.cont && sc.cont.who ? { who: sc.cont.who, pts: sc.cont.pts, base: sc.cont.base } : null;
+      row.fan = [];
+      for (let wi = 0; wi < nW; wi++) { const col = new Float64Array(sc.n); for (let j = 0; j < sc.n; j++) col[j] = sc.lv[j][wi]; row.fan.push([q(col, 0.1), q(col, 0.5), q(col, 0.9)]); }
+    }
+    rows.push(row);
+  }
+  rows.sort((x, y) => y.exp - x.exp);
+  const out = rows.slice(0, opts.limit || 60);
+  // FAAB: what he's worth to you in dollars, and what the manager who'd gain most from him could justify
+  const pd = faabPerDollar(ctx);
+  if (S.faab && pd > 0) {
+    const others = ctx.L.teams.filter((t) => t !== mine && t.roster && t.roster.length);
+    const theirs = others.map((t) => {
+      const cB = perspective(ctx, t), d = teamDepth(ctx, t), r0 = t.roster.filter((id) => ctx.byId.has(id));
+      const v0 = teamValue(cB, r0, "q", true, d);
+      // the player he'd drop: the one he values least
+      let low = null, lowV = Infinity;
+      for (const id of r0) { const x = v0 - teamValue(cB, r0.filter((y) => y !== id), "q", true, d); if (x < lowV) { lowV = x; low = id; } }
+      return { t, cB, d, r0, v0, low, budget: faabOf(ctx, t) };
+    });
+    for (const r of out.slice(0, opts.faabRows || 15)) {
+      let top = null;
+      for (const o of theirs) {
+        const r1 = o.r0.filter((id) => id !== o.low).concat([r.id]);
+        const g = teamValue(o.cB, r1, "q", true, o.d) - o.v0;
+        const dol = Math.min(o.budget, Math.max(0, g) / pd);
+        if (!top || dol > top.dollars) top = { team: o.t.id, gain: g, dollars: dol };
+      }
+      const worth = Math.max(0, r.exp) / pd, budget = faabOf(ctx, mine);
+      r.faab = { worth, rival: top, bid: Math.max(0, Math.min(budget, Math.round(worth), top ? Math.floor(top.dollars) + 1 : 1)) };
+    }
+  }
+  return { rows: out, weights: W, room, open, size, rosterCount: roster.length, ir: [...ir], dead: roster.filter((id, k) => dead[k]),
+    dropCost: new Map(roster.map((id, k) => [id, dropCost[k]])), holes: Array.from(h0), lines, ms: Date.now() - t00, faab: S.faab && pd > 0, pd };
+}
+
 /* ---------------- ESPN import ---------------- */
 const ESPN_SLOTS = { 0: "QB", 2: "RB", 3: "RBWR", 4: "WR", 5: "WRTE", 6: "TE", 7: "OP", 23: "FLEX", 17: "K", 16: "DST" };
 const ESPN_POS = { 1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "D/ST" };
@@ -2152,7 +2615,10 @@ function parseEspn(raw, DB, opts) {
     season,
     name: set.name || "ESPN league " + (j.id || ""),
     settings: { teams: +set.size || teams.length, scoring, slots, curWeek: week, lastWeek, playoffStart: regWeeks + 1,
-      faab: !!acq.isUsingAcquisitionBudget, faabBudget: +acq.acquisitionBudget || 100 },
+      faab: !!acq.isUsingAcquisitionBudget, faabBudget: +acq.acquisitionBudget || 100,
+      // roster room and the playoff field (the Waivers tab): ESPN's bench (slot 20) and IR (21) counts
+      ...(counts[20] != null ? { bench: +counts[20] || 0 } : {}), ...(counts[21] != null ? { ir: +counts[21] || 0 } : {}),
+      ...(+sch.playoffTeamCount > 0 ? { playoffTeams: +sch.playoffTeamCount } : {}) },
     teams,
     autoOut,
     players,
@@ -2189,4 +2655,4 @@ function applyEspn(prev, imp, DB, mineEspnTeamId) {
   return L;
 }
 
-if (typeof module !== "undefined" && module.exports) module.exports = { POSITIONS, OFF_POS, KD_POS, POS_LABEL, K_KEYS, D_KEYS, PA_TIERS, YA_TIERS, kScore, dScore, kdModel, parseKdScoring, slotCount, lineupFast, POS_CODE, PARAMS, DIST, makeRng, pPlay, weekStatus, distInputs, simWeek, distSummary, lineupSlotList, fitSlots, bestByValue, startSit, needCalc, shareOpp, faabPerDollar, faabValue, faabOf, depthFor, teamDepth, streamLevels, overWaiver, roleNotes, usageModel, sharePts, effOut, weekOfDate, defaultOut, DEFAULT_SETTINGS, newLeague, buildCtx, valuations, teamValue, evalTrade, findTrades, contextValues, lineupForWeek, sampleLeague, scoreComp, vorpQ, marketPrice, marketPrices, perspective, fanOf, teamMood, styleOf, styleWeights, perceive, outWeek, parseLeagueInput, espnApiUrl, extractJson, parseEspn, applyEspn, SIGNALS };
+if (typeof module !== "undefined" && module.exports) module.exports = { stashDecode, starterLines, contingent, stashScenarios, seasonOdds, waiverWeights, waiverBoard, rosterSize, irSlotted, POSITIONS, OFF_POS, KD_POS, POS_LABEL, K_KEYS, D_KEYS, PA_TIERS, YA_TIERS, kScore, dScore, kdModel, parseKdScoring, slotCount, lineupFast, POS_CODE, PARAMS, DIST, makeRng, pPlay, weekStatus, distInputs, simWeek, distSummary, lineupSlotList, fitSlots, bestByValue, startSit, needCalc, shareOpp, faabPerDollar, faabValue, faabOf, depthFor, teamDepth, streamLevels, overWaiver, roleNotes, usageModel, sharePts, effOut, weekOfDate, defaultOut, DEFAULT_SETTINGS, newLeague, buildCtx, valuations, teamValue, evalTrade, findTrades, contextValues, lineupForWeek, sampleLeague, scoreComp, vorpQ, marketPrice, marketPrices, perspective, fanOf, teamMood, styleOf, styleWeights, perceive, outWeek, parseLeagueInput, espnApiUrl, extractJson, parseEspn, applyEspn, SIGNALS };

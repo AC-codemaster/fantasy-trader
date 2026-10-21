@@ -147,6 +147,22 @@ def fit_luce(rows, games, smap, tm, col, here, u0=None, n=None, iters=300, decay
     return {p: float(u[idx[p]]) for p in here}, {p: int(pg[idx[p]]) for p in here}, len(games), ed
 
 
+def points(pos, e, car, tgt, att, mult):
+    """PPR points and stat-line components from expected carries, targets and pass attempts (engine.js sharePts)."""
+    if pos == "QB":
+        qc = att * e["cpa"]
+        comp = dict(py=att * e["ypa"] * mult["ypa"], ptd=att * e["ptd"] * mult["ptd"], int=att * e["ipa"],
+                    ry=qc * e["ypc"] * mult["ypc"], rtd=qc * e["rtd"] * mult["rtd"], rec=0, recy=0, rectd=0,
+                    fl=(att + qc) * e["fl"], two=(att + qc) * e["two"])
+    else:
+        comp = dict(py=0, ptd=0, int=0, ry=car * e["ypc"] * mult["ypc"], rtd=car * e["rtd"] * mult["rtd"],
+                    rec=tgt * e["cr"], recy=tgt * e["ypt"] * mult["ypt"], rectd=tgt * e["rctd"] * mult["rctd"],
+                    fl=(car + tgt) * e["fl"], two=(car + tgt) * e["two"])
+    pts = (comp["py"] * 0.04 + comp["ptd"] * 4 - comp["int"] * 2 + comp["ry"] * 0.1 + comp["rtd"] * 6
+           + comp["rec"] + comp["recy"] * 0.1 + comp["rectd"] * 6 - comp["fl"] * 2 + comp["two"] * 2)
+    return pts, comp
+
+
 class Season:
     """Everything for replaying season S."""
 
@@ -225,8 +241,10 @@ class Season:
         q = dc[(dc.week == W) & (dc.position == "QB") & (dc.formation == "Offense") & (dc.game_type == "REG")]
         return {(r.club_code, r.gsis_id): int(r.depth_team) for r in q.itertuples() if isinstance(r.gsis_id, str)}
 
-    def project(self, W, params=None):
-        """Projected PPR components for every player who played in week W of season S."""
+    def project(self, W, params=None, extra=None):
+        """Projected PPR components for every player who played in week W of season S.
+        extra: optional callback, called once per team with that team's projection state (the waiver study,
+        waivers/stash_study.py, projects players who didn't play and contingent roles from it); None changes nothing."""
         P = dict(BASE)
         P.update(params or {})
         S = self.S
@@ -422,6 +440,9 @@ class Season:
                 mult["rtd"] = np.exp(env["rtd_i"] * x + env["rtd_s"] * s - env["car_i"] * x - env["car_s"] * s)
                 if env.get("wind") and pd.notna(ln["wind"]) and ln["wind"] >= 15 and ln["roof"] not in ("dome", "closed"):
                     mult["ypa"] *= np.exp(env["wind"]); mult["ypt"] *= np.exp(env["wind"])
+            if extra is not None:
+                extra(dict(S=S, W=W, team=tm, ids=ids, U=U, uu=uu, D=D, Dall=Dall, T=T, mult=mult, roW=roW, back=back,
+                           efficiency=efficiency, damp=P["damp"]))
             for pid in ids:
                 if pid not in roW.index:
                     continue
@@ -431,17 +452,7 @@ class Season:
                 tgt = T["t"] * ut / D["t"] if D["t"] > 0 else 0.0
                 att = T["p"] * up / D["p"] if D["p"] > 0 else 0.0
                 e = efficiency(pid, pos)
-                if pos == "QB":
-                    qc = att * e["cpa"]
-                    comp = dict(py=att * e["ypa"] * mult["ypa"], ptd=att * e["ptd"] * mult["ptd"], int=att * e["ipa"],
-                                ry=qc * e["ypc"] * mult["ypc"], rtd=qc * e["rtd"] * mult["rtd"], rec=0, recy=0, rectd=0,
-                                fl=(att + qc) * e["fl"], two=(att + qc) * e["two"])
-                else:
-                    comp = dict(py=0, ptd=0, int=0, ry=car * e["ypc"] * mult["ypc"], rtd=car * e["rtd"] * mult["rtd"],
-                                rec=tgt * e["cr"], recy=tgt * e["ypt"] * mult["ypt"], rectd=tgt * e["rctd"] * mult["rctd"],
-                                fl=(car + tgt) * e["fl"], two=(car + tgt) * e["two"])
-                pts = (comp["py"] * 0.04 + comp["ptd"] * 4 - comp["int"] * 2 + comp["ry"] * 0.1 + comp["rtd"] * 6
-                       + comp["rec"] + comp["recy"] * 0.1 + comp["rectd"] * 6 - comp["fl"] * 2 + comp["two"] * 2)
+                pts, comp = points(pos, e, car, tgt, att, mult)
                 out.append(dict(id=pid, season=S, week=W, team=tm, pos=pos, pred=pts, car=car, tgt=tgt, att=att,
                                 g_cur=int(tc.loc[pid].g) if pid in tc.index else 0, age=ages.get(pid),
                                 qbrank=qbd.get((tm, pid)), ur=ur, ut=ut, up=up,

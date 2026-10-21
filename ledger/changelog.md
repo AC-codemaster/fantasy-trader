@@ -111,3 +111,15 @@ the D/ST lineup slot (`pointsOverrides["16"]`, `points` 0) and FG 50–59 as sta
 Now the slot override comes first, 198/199/200, 201–203, 75/78/81/84/87 and the D/ST points-allowed tiers
 188–196 are read, and overlapping rules add up. The test uses ESPN's real shape (fetched from the league). The
 saved league (espn-1647180066) had its K/DST rules corrected to the league's; other imported leagues: re-import.
+
+## 2026-10-20 — structural: Waivers tab (no change to projections or trade values)
+
+New tab ranking free agents for one team (`docs/waivers.md`): lineup points added this week (against the lineup you
+have) and the rest of the season (against the streamer, with him off the wire), against the best drop; upside from a
+bank of past free agents' projection paths (2022–25, the live model replayed weekly through a new per-team hook in
+`backtest_core.project`, which leaves its output unchanged: week 8 of 2025 matches the champion to 5e-5); week weights
+from a season simulation of your title chances; a hold horizon from roster room and upcoming fill-ins; FAAB bids.
+Held out: breakout chances calibrated; stash-zone rank correlation 0.28 vs 0.22 for the projection. New engine
+settings `bench`, `ir`, `playoffTeams` (ESPN import fills them); `usageModel` also returns each player's week-0 pool
+denominators. Projections, trade values and the archived engines are unchanged (tests: page parity with the Week 5
+engine, trade regressions).

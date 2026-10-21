@@ -190,6 +190,7 @@ function resetUi() {
   ui.trade = { mine: "", partner: "", give: new Set(), get: new Set(), mg: 0, mr: 0 };
   if (ui.ss) Object.assign(ui.ss, { mine: "", opp: "", res: null, resFor: null, cands: [], left: { mine: new Set(), theirs: new Set() }, calc: null, calcFor: null, board: null, boardFor: null });
   ui.finder.results = null; ui.finder.partners = new Set();
+  if (ui.wv) Object.assign(ui.wv, { mine: "", res: null, resFor: null, odds: null, oddsFor: null, sel: "" });
   ui.players.sel = ""; ui.confirm = "";
   ui.imp.input = state.espn ? String(state.espn.leagueId) : ui.imp.input;
 }
@@ -1006,6 +1007,9 @@ function renderLeague() {
           <label class="field"><span class="label">Count through week</span>${num("set-last", "lastWeek", S.lastWeek, 'min="1" max="18"')}</label>
           <label class="field"><span class="label">Playoffs start</span>${num("set-po", "playoffStart", S.playoffStart, 'min="1" max="18"')}</label>
           <label class="field"><span class="label">Playoff week weight</span>${num("set-pow", "playoffWeight", S.playoffWeight, 'min="0" max="5" step="0.25"')}<span class="hint">1 = same as a regular week</span></label>
+          <label class="field"><span class="label">Playoff teams</span>${num("set-pot", "playoffTeams", S.playoffTeams || (+S.teams <= 10 ? 4 : 6), 'min="2" max="16"')}<span class="hint">Waivers: your title chances</span></label>
+          <label class="field"><span class="label">Bench spots</span>${num("set-bench", "bench", S.bench ?? DEFAULT_SETTINGS.bench, 'min="0" max="20"')}</label>
+          <label class="field"><span class="label">IR slots</span>${num("set-ir", "ir", S.ir ?? DEFAULT_SETTINGS.ir, 'min="0" max="10"')}<span class="hint">Don't use a bench spot</span></label>
         </div>
         <h3 style="margin-top:6px">Starting lineup</h3>
         <div class="fields">${slotFields.map(([k, l]) => `<label class="field"><span class="label">${l}</span>${num("slot-" + k, "slots." + k, sl[k] || 0, 'min="0" max="4"')}</label>`).join("")}</div>
@@ -1159,6 +1163,13 @@ P(accept) = 1 / (1 + e^−((felt − edge) / predictability))</div>
   <p><b>Floor vs ceiling.</b> The calculator answers one decision: who gives you the best chance of the points you need (or, with the players still to play on both sides, the best chance to win). The chart shows each player's chance of at least x points; where two lines cross is the target at which the steadier player stops being the better bet.</p>
   <p><b>What really sets a player's range.</b> His projection, his position, his game and the chance he sits. His style matters less than it looks: replaying 2024–26, players whose points lean on long plays and touchdowns had about the same week-to-week spread as volume players with the same projection (receivers who catch a high share of their targets were about 4% steadier, deep threats about 4% wilder, and even that didn't hold from one season to the next). At the same projection, running backs actually had a slightly higher floor and ceiling than receivers. So the high-volume back isn't capped: when you need 15, compare the chances, not the labels.</p>
   <p class="notice">Not modeled yet: opponent-specific matchups beyond the Vegas line, and live in-game scores (type the deficit yourself). In the backtest, a QB and his top receiver move together a little more in the simulation than in real games (0.45 vs 0.38), and opposing receivers a little less (0.05 vs 0.18).</p>
+  <h3>6c. Waivers: value, upside, and whether you can wait for it</h3>
+  ${(() => { const c = STASH && STASH.checks, th = c ? c.thinned : null, bl = c ? c.baseline : null; return `<p>A free agent is worth what he adds to your starting lineups, week by week, against the player you'd drop for him: this week against the lineup you have (this week's pickup is the decision being made), later weeks against your lineup plus the usual streamer at each position, which he no longer is once he's yours. That's his value on his projection.</p>
+  <p><b>Upside.</b> A projection is one number, but a waiver player's role can change: the starter ahead of him gets hurt, he wins the job, his team trades someone. You only start him in the weeks it pays, so the good outcomes count and the bad ones mostly don't. To price that, the projection model was replayed at every week of the ${c ? c.seasons[0] + "–" + c.seasons[c.seasons.length - 1] : "2022–25"} seasons, and for every player who could have been on waivers (outside the clear starters at his position) we kept his projection in every later week, measured in weekly-starter lines (the 12th QB, 24th RB, 30th WR, 12th TE that week). A free agent's scenarios are the paths of the 60 past players most like him: same position, the same projection and the same contingent role (what he'd project if the best teammate at his position ahead of him sat) as a share of the line, the same time of year, rookie or not. Each path moves his own weekly projection by as many lines as that player's moved. His value is the average over the scenarios; Upside is that minus his value on projection.</p>
+  <p>${c ? `Checked on held-out seasons (each season predicted from the others only): the chance of projecting as a weekly starter within four weeks matches what happened at every level (for example, players given 20–35% got there ${pct(c.calibration.find((x) => x.pred >= 0.2 && x.pred < 0.35)?.actual ?? 0.29)} of the time), and among players below 80% of the line it ranks who ends up useful better than the projection does (rank correlation ${fmt(th.rank_corr_zone, 2)} vs ${fmt(bl.rank_corr_zone, 2)}; the ten best each week by the bank had ${fmt(th.top10_zone_surplus / Math.max(1e-9, bl.top10_zone_surplus), 2)} times the surplus of the ten best by projection). Which features mattered: the projection most, then the contingent role, the week and being a rookie: at the same projection rookies more often grew into weekly starters, and between 60% and 80% of the line their surplus over the next eight weeks was about twice veterans'.` : ""}</p>
+  <p><b>Can you afford to wait for it?</b> Two things decide. <i>Which weeks matter to you:</i> by default every remaining week counts by how much a point that week moves your chance to win the title. The page simulates the rest of the season a few thousand times (your ESPN schedule when imported, records and points so far, every team's projected lineups with a weekly swing of 18% of an average lineup, seeds by wins then points, the bracket with byes) and adds half a swing to your score one week at a time. A team that's safely in counts its playoff weeks most, so upside that pays off later ranks higher; a team fighting for a spot counts the next few weeks most. The weights are blended with even ones in proportion to how much signal the simulation has (none for a team with no title chance) and scaled to the trade tool's total, so values stay in rest-of-season points. You can also count every week the same, the next few weeks, or the playoff weeks. <i>How long you can hold him:</i> your open roster spots and the players who add nothing to your lineups are the room you stream from. The first week a pickup leaves your lineup a fill-in short (a bye or an injury you could otherwise cover), a stash who hasn't become a keeper goes, judged on what you'd know then (his projection at that point carried forward, not his future); one you keep costs that fill-in. IR slots don't use a bench spot.</p>
+  <p><b>FAAB.</b> Worth up to: his value in dollars at the going rate for this season's remaining waiver breakouts (the same rate the trade tool uses for FAAB). The rival is the manager who'd gain most from him by his own view (his style, his roster, his drop); bidding one dollar over what he'd gain beats him if he bids his full value.</p>
+  <p class="notice">Not counted: the chance you'd win him on waivers anyway after his role grows (a handcuff is worth less than shown if you'd surely win that claim), and breakouts among the other free agents (the streamer is the wire as it projects today). Kickers and defenses are valued on their projections.</p>`; })()}
   <h3>Limits</h3>
   <p>Projections don't adjust for opponent strength beyond the Vegas line (a defense's and an offense's own sack and turnover rates excepted). A player new to the league since this data was built won't match on import until the data is refreshed. When you know something the data doesn't, type your own number on the Players tab.</p>
   <h3>7. Weekly updates</h3>
@@ -1486,11 +1497,165 @@ function bindChart() {
   hit.addEventListener("pointerleave", () => { tip.style.display = "none"; xh.style.display = "none"; });
 }
 
+/* ---------------- Waivers ---------------- */
+const STASH = (() => { try { const el = document.getElementById("stash"); return el ? JSON.parse(el.textContent) : null; } catch (e) { return null; } })();
+ui.wv = { mine: "", mode: "auto", pos: "", res: null, resFor: null, odds: null, oddsFor: null, sel: "", busy: false };
+const WV_MODES = [["auto", "Your title chances (auto)"], ["even", "Every week the same"], ["now", "The next few weeks"], ["playoffs", "The playoff weeks"]];
+function wvDefaults() { const W = ui.wv; if (!teamById(W.mine)) W.mine = (myTeam() || {}).id || ""; }
+function wvStale() { const W = ui.wv, f = W.resFor; return !W.res || !f || f.ctx !== ctx || f.mine !== W.mine || f.mode !== W.mode || f.pos !== W.pos; }
+function wvCompute() {
+  const W = ui.wv, mine = teamById(W.mine);
+  if (!mine) return;
+  // the season simulation depends only on the league and your team, not on the mode or position filter
+  if (!W.odds || !W.oddsFor || W.oddsFor.ctx !== ctx || W.oddsFor.mine !== W.mine) {
+    W.odds = state.teams.length >= 4 ? seasonOdds(ctx, mine) : null;
+    W.oddsFor = { ctx, mine: W.mine };
+  }
+  W.res = waiverBoard(ctx, mine, { bank: STASH, mode: W.mode, odds: W.odds, pos: W.pos, limit: 60 });
+  W.resFor = { ctx, mine: W.mine, mode: W.mode, pos: W.pos };
+}
+const wkLabel = (wi) => (ctx.weeks[wi] ? "Week " + ctx.weeks[wi].w : "");
+function holdTxt(r, short) {
+  const n = ctx.weeks.length;
+  if (r.hold >= n) return short ? "season" : "all season";
+  if (r.hold === 0) return short ? "no room" : "no room this week";
+  return short ? "to Wk " + ctx.weeks[r.hold].w : "until " + wkLabel(r.hold);
+}
+/* How much each remaining week counts, as a strip of bars (playoff weeks shaded). */
+function weightStrip(w) {
+  const mx = Math.max(...w, 0.01), ps = +state.settings.playoffStart;
+  return `<div class="wk-strip" role="img" aria-label="How much each remaining week counts">${w.map((x, i) => {
+    const wk = ctx.weeks[i].w;
+    return `<div class="wk-cell ${wk >= ps ? "po" : ""}" title="Week ${wk}: counts ${fmt(x, 2)}× a regular week"><div class="wk-plot"><i style="height:${Math.max(2, Math.round((x / mx) * 54))}px;background:var(--accent)"></i></div><span class="wk-n">${wk}</span></div>`;
+  }).join("")}</div>`;
+}
+/* His projection, week by week: the scenarios' middle half and 10th-90th percentile band, the median, his projection
+   and the weekly-starter line. */
+function fanSVG(r) {
+  const fan = r.fan, n = fan.length, a = Array.from(ctx.wkA.get(r.id)), L = (ui.wv.res.lines || {})[r.pos];
+  const W = 640, H = 200, l = 36, rr = 12, t = 10, b = 26;
+  const ymax = Math.max(5, ...fan.map((x) => x[2]), ...(L || []), ...a.map((x) => x || 0)) * 1.08;
+  const X = (i) => l + (n === 1 ? 0.5 : i / (n - 1)) * (W - l - rr), Y = (v) => t + (1 - v / ymax) * (H - t - b);
+  const path = (pts) => pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join("");
+  const band = path(fan.map((f, i) => [X(i), Y(f[2])]).concat(fan.map((f, i) => [X(i), Y(f[0])]).reverse())) + "Z";
+  let grid = "";
+  const step = ymax > 30 ? 10 : 5;
+  for (let v = 0; v <= ymax; v += step) grid += `<line class="grid" x1="${l}" x2="${W - rr}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${l - 6}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`;
+  fan.forEach((f, i) => { if (n <= 14 || i % 2 === 0) grid += `<text x="${X(i)}" y="${H - 8}" text-anchor="middle">${ctx.weeks[i].w}</text>`; });
+  const av = ctx.weeks.map(({ w }) => available(ctx, r.id, w));
+  return `<svg class="ss-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="His projection by week: median and range of the scenarios">
+    ${grid}<path d="${band}" fill="var(--accent)" opacity=".16"/>
+    ${L ? `<path d="${path(L.map((v, i) => [X(i), Y(v)]))}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 3"/>` : ""}
+    <path d="${path(a.map((v, i) => [X(i), Y(av[i] ? Math.max(0, v) : 0)]))}" fill="none" stroke="var(--ink)" stroke-width="1.5" opacity=".55"/>
+    <path d="${path(fan.map((f, i) => [X(i), Y(f[1])]))}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>
+  </svg>`;
+}
+function wvDetail(r) {
+  const p = pl(r.id), res = ui.wv.res, mine = teamById(ui.wv.mine);
+  const lines = [];
+  if (r.drop) {
+    const dc = res.dropCost.get(r.drop);
+    lines.push(`<b>Drop ${esc(pl(r.drop).n)}</b>: ${dc < 1 ? "he adds next to nothing to your lineups the rest of the season" : `he adds ${fmt(dc)} points to your lineups the rest of the season, the least of anyone you'd cut`}.`);
+  } else lines.push(`<b>No drop needed</b>: you have ${res.open} open roster spot${res.open === 1 ? "" : "s"}.`);
+  if (r.n) {
+    const rook = r.rel0 != null && !((+p.g25 || 0) > 0 || (+p.g24 || 0) > 0);
+    lines.push(`<b>Players like him</b>: the ${r.n} most similar free agents of 2022–25 (a ${POSL(p.p)} projecting ${pct(r.rel0)} of a weekly starter${r.relc > r.rel0 + 0.02 ? `, ${pct(r.relc)} if the starter ahead of him sat` : ""}, this time of year${rook ? ", rookies" : ""}). ${pct(r.odds)} of them projected as a weekly starter within four weeks.`);
+    if (r.cont) lines.push(`<b>If ${esc(pl(r.cont.who).n)} misses time</b>, he projects ${fmt(r.cont.pts)} a game instead of ${fmt(r.cont.base)} (the projection model's split of the work, before the expert blend).`);
+    lines.push(`<b>Range</b>: in the scenarios' worst tenth he's worth ${fmt(r.p10)} to you, in the best tenth ${fmt(r.p90)} (expected ${fmt(r.exp)}; ${fmt(r.proj)} on his projection alone).`);
+  }
+  const n = ctx.weeks.length;
+  if (r.hold >= n) lines.push(`<b>Holding him</b>: you have room for him all season (${res.room} spot${res.room === 1 ? "" : "s"} you can stream from with him on the roster: open spots and players adding nothing).`);
+  else lines.push(`<b>Holding him</b>: in ${wkLabel(r.hold)} he'd leave your lineup a fill-in short (byes or injuries) that you could otherwise cover. Unless he's a keeper by then he goes; keeping him would cost ${fmt(r.keepCost)} points of fill-ins. The value counts both.`);
+  if (r.faab) {
+    const t = r.faab.rival && teamById(r.faab.rival.team);
+    lines.push(`<b>FAAB</b>: worth up to $${Math.round(r.faab.worth)} to you (at ${fmt(1 / res.pd, 1)} dollars a point, the going rate for this season's remaining breakouts). ${t ? `${esc(t.name)} gains the most from him by their own view: about $${Math.round(r.faab.rival.dollars)} of value.` : ""} ${r.faab.worth > (r.faab.rival ? r.faab.rival.dollars : 0) ? `A bid of $${r.faab.bid} beats that.` : `He's worth more to them than to you; bid $${r.faab.bid} only if you want him anyway.`}`);
+  }
+  return `<div class="grid cols-2 wv-detail" style="gap:12px;padding:6px 2px 10px">
+    <div class="stack" style="gap:6px;font-size:14px">${lines.map((x) => `<div>${x}</div>`).join("")}</div>
+    ${r.fan ? `<div><div class="label" style="margin-bottom:4px">His projection by week</div>${fanSVG(r)}<p class="notice" style="margin:4px 0 0"><span style="color:var(--accent)">Orange</span>: the scenarios' median and 10th–90th percentile band. Grey: his projection today. Dashed: the weekly-starter line (${POSL(p.p)}${(STASH && STASH.startN && STASH.startN[p.p]) || ""}). Zero in weeks he's on bye or out.</p></div>` : `<div class="notice">${KD_POS.includes(p.p) ? "Kickers and defenses are valued on their projections: their week-to-week swings come from matchups, which the projection already has." : "No scenarios for him."}</div>`}
+  </div>`;
+}
+function boardHTMLwv() {
+  const W = ui.wv, res = W.res;
+  if (!res) return `<div class="empty">Valuing the waiver wire…</div>`;
+  const rows = res.rows;
+  if (!rows.length) return `<div class="empty">No free agents worth a look${W.pos ? " at " + POSL(W.pos) : ""}.</div>`;
+  const mx = Math.max(1, ...rows.map((r) => Math.abs(r.p90)), ...rows.map((r) => Math.abs(r.exp)));
+  const bar = (r) => {
+    const x = (v) => Math.max(0, Math.min(100, (Math.max(0, v) / mx) * 100));
+    return `<div class="rbar" title="Value range across his scenarios: 10th percentile ${fmt(r.p10)}, expected ${fmt(r.exp)}, 90th ${fmt(r.p90)}"><i class="r90 ${r.pos}" style="left:${x(r.p10)}%;width:${Math.max(1, x(r.p90) - x(r.p10))}%"></i><i class="med" style="left:calc(${x(r.exp)}% - 1px)"></i></div>`;
+  };
+  const faab = res.faab;
+  // on a phone the optional columns (class wv-x) drop out; the detail row has them
+  const head = `<tr><th>Player</th><th class="n" title="Points he adds to this week's lineup, against what you'd start without him">This week</th><th class="n wv-x" title="Rest-of-season lineup points on his projection alone, each week weighted">On proj</th><th class="n" title="What his scenarios add on top of (or take off) his projection">Upside</th><th class="n" title="Expected rest-of-season lineup points he adds, scenarios included">Value</th><th class="wv-x">Range</th><th class="n" title="Chance he projects as a weekly starter within four weeks, from past players like him">Starter odds</th><th class="wv-x">Drop</th><th class="wv-x" title="How long you can hold him before you need his roster spot">Room</th>${faab ? '<th class="n" title="Suggested blind bid">Bid</th>' : ""}</tr>`;
+  const body = rows.map((r) => {
+    const p = pl(r.id), stash = r.upside > Math.max(1, 0.5 * r.exp) && r.now < 0.25;
+    const tr = `<tr class="clickable ${W.sel === r.id ? "sel" : ""}" data-act="wvSel" data-id="${r.id}">
+      <td>${chipOf(p.p)} <span class="pname">${esc(p.n)}</span> ${injTag(p)} ${stash ? '<span class="tag pf-ceil" title="Most of his value is upside: a stash">stash</span>' : ""}<div class="sub">${p.t} · bye ${byeOf(p)} · ${ctx.val.get(r.id).avail[0] ? `${fmt(ctx.wkA.get(r.id)[0])} proj this week` : (DB.byes[p.t] || []).includes(+state.settings.curWeek) ? "on bye this week" : "out this week"}${rostOf(p) != null ? ` · ${fmt(rostOf(p), 0)}% rostered` : ""}</div></td>
+      <td class="n">${r.now > 0.05 ? sgn(r.now) : '<span class="muted">–</span>'}</td>
+      <td class="n wv-x">${sgn(r.proj)}</td>
+      <td class="n ${r.upside > 0.5 ? "good" : r.upside < -0.5 ? "bad" : ""}">${r.n ? sgn(r.upside) : '<span class="muted">–</span>'}</td>
+      <td class="n"><b>${sgn(r.exp)}</b></td>
+      <td class="wv-x" style="min-width:90px">${r.n ? bar(r) : ""}</td>
+      <td class="n">${r.odds == null ? '<span class="muted">–</span>' : pct(r.odds)}</td>
+      <td class="sub wv-x" style="white-space:normal">${r.drop ? esc(pl(r.drop).n) : "open spot"}</td>
+      <td class="sub wv-x">${holdTxt(r, true)}</td>
+      ${faab ? `<td class="n">${r.faab ? "$" + r.faab.bid : ""}</td>` : ""}</tr>`;
+    return tr + (W.sel === r.id ? `<tr><td colspan="${faab ? 10 : 9}" style="white-space:normal">${wvDetail(r)}</td></tr>` : "");
+  }).join("");
+  return `<div class="tablewrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>
+    <p class="notice" style="margin:8px 0 0">Values are rest-of-season points added to your starting lineups, after the drop, each week counted as the box above weighs it. Click a player for his scenarios. ${res.ms ? `(${res.ms} ms)` : ""}</p>`;
+}
+function standingBoxHTML() {
+  const W = ui.wv, res = W.res, mine = teamById(W.mine);
+  if (!res) return "";
+  const wt = res.weights, o = wt.odds, n = ctx.weeks.length, ps = +state.settings.playoffStart;
+  const reg = wt.w.filter((x, i) => ctx.weeks[i].w < ps), po = wt.w.filter((x, i) => ctx.weeks[i].w >= ps);
+  const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+  const crunch = res.holes.map((h, i) => [h, i]).filter(([h]) => h > res.room).map(([h, i]) => i)[0];
+  let why = "";
+  if (wt.mode === "auto" && o) {
+    const lean = avg(po) > 1.4 * avg(reg) ? "Your playoff weeks count most: upside that pays off later is worth more to you, so stashes rank higher."
+      : avg(reg) > avg(po) ? "The next few weeks count most: you need wins now, so players who help right away rank higher."
+      : "Your weeks count about evenly.";
+    why = `${recordStr(mine) ? esc(recordStr(mine)) + ": " : ""}${pct(o.pPlayoffs)} to make the playoffs, ${pct(o.pTitle)} to win it all (${o.n.toLocaleString()} simulated seasons${o.schedule ? " on your schedule" : ", random opponents (import from ESPN for your schedule)"}; top ${o.nPO} make it). ${lean}`;
+  } else if (wt.mode === "auto") why = "Not enough of the league is entered to simulate the standings (it needs four teams with rosters), so every week counts the same.";
+  else why = { even: "Every week counts the same (playoff weeks at the league's playoff weight).", now: "The next few weeks count most: each week counts 60% of the one before.", playoffs: "The playoff weeks count most; regular-season weeks a quarter as much." }[wt.mode] || "";
+  return `<div class="metric-grid">
+      <div class="metric"><span class="label">Which weeks count</span>${weightStrip(wt.w)}<span class="note">${why}</span></div>
+      <div class="metric"><span class="label">Room to stash</span><span class="big">${res.room}</span><span class="note">${res.open ? `${res.open} open spot${res.open === 1 ? "" : "s"}` : "No open spots"}${res.dead.length ? `; free to drop (they add nothing to your lineups): ${res.dead.map((id) => esc(pl(id).n)).join(", ")}` : ""}. Roster ${res.rosterCount}${res.ir.length ? ` incl. ${res.ir.length} on IR` : ""} of ${res.size} plus IR.</span></div>
+      <div class="metric"><span class="label">When room runs out</span><span class="big">${crunch == null ? "Never" : "Wk " + ctx.weeks[crunch].w}</span><span class="note">${crunch == null ? "Your fill-ins (byes and injuries) never need more spots than you have: a stash can sit all season." : `${wkLabel(crunch)} needs ${res.holes[crunch]} fill-ins and you have ${res.room} spots: a stash who hasn't become a keeper by then goes, and his value counts only to then.`}</span></div>
+    </div>`;
+}
+function renderWaivers() {
+  const el = $("#panel-waivers");
+  if (state.teams.length < 1) { el.innerHTML = `<h2>Waivers</h2><p class="lede">The free agents who'd help your team most, with their upside.</p>` + emptyLeague(); return; }
+  wvDefaults();
+  const W = ui.wv;
+  const opts = state.teams.map((t) => `<option value="${t.id}" ${t.id === W.mine ? "selected" : ""}>${esc(t.name)}${t.mine ? " (mine)" : ""}</option>`).join("");
+  el.innerHTML = `${exampleBanner()}<h2>Waivers · Week ${state.settings.curWeek}</h2>
+    <p class="lede">The free agents who'd help your team most: what each adds to your starting lineups this week and the rest of the season, against the player you'd drop for him, plus his upside. A projection is one number, but a waiver player's role can grow (the starter ahead of him gets hurt, he wins the job) and you only start him if it does, so the upside counts and the downside mostly doesn't. The upside comes from what happened next to the most similar free agents of the last four seasons. It counts for more when you can afford to wait for it: when your title chances ride on the playoff weeks and you have the roster room to hold him.</p>
+    <div class="box stack" style="margin-bottom:14px">
+      <div class="ss-head">
+        <label class="field"><span class="label">Your team</span><select id="wvMine" data-act="wvMine">${opts}</select></label>
+        <label class="field"><span class="label">Count weeks by</span><select id="wvMode" data-act="wvMode">${WV_MODES.map(([k, l]) => `<option value="${k}" ${W.mode === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <label class="field"><span class="label">Position</span><select id="wvPos" data-act="wvPos"><option value="">All</option>${POSITIONS.filter((x) => DB.players.some((p) => p.p === x)).map((x) => `<option value="${x}" ${W.pos === x ? "selected" : ""}>${POSL(x)}</option>`).join("")}</select></label>
+      </div>
+      <div id="wvStanding">${standingBoxHTML()}</div>
+    </div>
+    <div class="box stack">
+      <div class="row"><h3>Best pickups for ${esc((teamById(W.mine) || {}).name || "your team")}</h3></div>
+      <div id="wvBoard">${boardHTMLwv()}</div>
+    </div>
+    ${STASH ? "" : `<p class="notice">The upside bank isn't in this page, so values are on projections alone.</p>`}`;
+  if (wvStale()) setTimeout(() => { if (tab !== "waivers") return; wvCompute(); if (tab === "waivers") renderWaivers(); }, 30);
+}
+
 /* ---------------- render + events ---------------- */
 function render() {
   document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === tab ? "true" : "false"));
   document.querySelectorAll(".panel").forEach((p) => (p.hidden = p.id !== "panel-" + tab));
-  ({ trade: renderTrade, finder: renderFinder, startsit: renderStartSit, teams: renderTeams, players: renderPlayers, league: renderLeague, method: renderMethod })[tab]();
+  ({ trade: renderTrade, finder: renderFinder, startsit: renderStartSit, waivers: renderWaivers, teams: renderTeams, players: renderPlayers, league: renderLeague, method: renderMethod })[tab]();
 }
 function setPath(obj, path, v) {
   const ks = path.split(".");
@@ -1563,6 +1728,7 @@ document.addEventListener("click", (ev) => {
     case "ssLeftMine": { const s = ui.ss.left.mine, id = t.dataset.id; s.has(id) ? s.delete(id) : s.add(id); renderStartSit(); break; }
     case "ssLeftTheirs": { const s = ui.ss.left.theirs, id = t.dataset.id; s.has(id) ? s.delete(id) : s.add(id); renderStartSit(); break; }
     case "ssBoard": ui.ss.showBoard = true; renderStartSit(); break;
+    case "wvSel": ui.wv.sel = ui.wv.sel === t.dataset.id ? "" : t.dataset.id; { const b = $("#wvBoard"); if (b) b.innerHTML = boardHTMLwv(); } break;
     case "ssBsort": ui.ss.bsort = t.dataset.k; { const b = $("#ssBoardBox"); if (b) b.innerHTML = boardHTML(); } break;
     case "fpart": { const F = ui.finder, id = t.dataset.team; F.partners.has(id) ? F.partners.delete(id) : F.partners.add(id); F.results = null; renderFinder(); break; }
     case "fpartAll": ui.finder.partners = new Set(); ui.finder.results = null; renderFinder(); break;
@@ -1678,6 +1844,9 @@ document.addEventListener("change", (ev) => {
     case "ssOpp": ui.ss.opp = t.value; ui.ss.left.theirs = new Set(); renderStartSit(); break;
     case "ssNeed": { const v = +t.value; if (isFinite(v)) { ui.ss.need = v; renderStartSit(); } break; }
     case "ssKd": ui.ss.kdst = t.checked; renderStartSit(); break;
+    case "wvMine": ui.wv.mine = t.value; ui.wv.sel = ""; renderWaivers(); break;
+    case "wvMode": ui.wv.mode = t.value; renderWaivers(); break;
+    case "wvPos": ui.wv.pos = t.value; ui.wv.sel = ""; renderWaivers(); break;
     case "ssBpos": ui.ss.bpos = t.value; { const b = $("#ssBoardBox"); if (b) b.innerHTML = boardHTML(); } break;
     case "ssBown": ui.ss.bown = t.value; { const b = $("#ssBoardBox"); if (b) b.innerHTML = boardHTML(); } break;
     case "ppos": ui.players.pos = t.value; renderPlayers(); break;

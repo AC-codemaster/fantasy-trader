@@ -16,6 +16,7 @@ improvement loop that tunes the model on its own.
 | `pipeline/build_db.py` | builds the weekly player database (usage shares, efficiency, injuries and this week's game status, game-day inactives, expert ranks; kickers and defenses from `pipeline/kdst.py`) |
 | `pipeline/kdst.py`, `backtest/kdst_backtest.py` | kickers and team defenses: expected stat lines per week from the Vegas lines and their histories, ESPN-standard points, and their own backtest; `docs/kdst.md` |
 | `dist/`, `params/dist.json` | weekly points distributions behind the Start/Sit tab: the reference simulation (`sim.py`), its fit and checks (`fit_dist.py`, `bt_frames.py`), the fitted numbers; `docs/start-sit.md` |
+| `waivers/stash_study.py`, `params/stash.json` | the Waivers tab's upside bank: past free agents' projection paths (2022-25, the model replayed weekly), relative to the weekly-starter line, with held-out checks; `docs/waivers.md` |
 | `pipeline/scorecard.py` | freezes each week's projections and grades them (incl. hindsight and rest of season) |
 | `params/params.json` | every tuned constant, with bounds and step; the only file the improvement loop edits |
 | `params/annual.json` | constants refitted once a year (aging curves, game-environment elasticities, low-volume cuts, FAAB thresholds), read by the builder, backtest and engine; `tools/annual_refit.py` |
@@ -25,7 +26,7 @@ improvement loop that tunes the model on its own.
 | `ledger/` | `experiments.jsonl` (every experiment), `changelog.md` (adopted/reverted), `state.json`, `last_run.md` |
 | `data/inputs/<season>/w<week>/` | what the page ran on each week (db, injuries, params, engine): replayable |
 | `data/freeze`, `data/ros`, `data/graded`, `data/scorecard` | frozen projections, grades, scorecard data |
-| `tests/` | checks that must pass before publishing (page parity, trade-engine regressions, season grouping, gate, kickers and defenses on a fixed build) |
+| `tests/` | checks that must pass before publishing (page parity, trade-engine regressions, season grouping, gate, kickers and defenses on a fixed build, the waiver board and its bank) |
 | `runbooks/` | `weekly.md` (the Tuesday scheduled task), `gameday.md` (pre-kickoff refreshes on every game day, with inactives; one self-scheduling task), `improve-agent.md` (structural changes), `rollover.md`, and the offseason tasks: `rookie-draft.md` (May), `annual-refit.md` (February, with the sealed holdout), `trade-autopsy.md` (January); `saturday.md` is retired |
 | `tools/trade_autopsy.py` | every trade in a league: the model at the trade date vs what each side gained; acceptance re-graded |
 
@@ -64,5 +65,6 @@ python3 ../backtest/evaluate.py --set decay=0.875   # one experiment by hand
 python3 ../improve/improve.py --dry-run             # what this week's loop would do
 python3 ../backtest/kdst_backtest.py --baselines    # kickers and defenses: the replay vs naive references
 python3 ../rookie/rookie_model.py all --cache rk    # rookie priors (downloads into rk/)
+python3 ../waivers/stash_study.py frames && python3 ../waivers/stash_study.py fit --write   # waiver upside bank (needs fetch_history 2022-2025)
 python3 ../tools/make_page.py --db db.json --injnews injury_news.json --out fantasy-trader.html
 ```

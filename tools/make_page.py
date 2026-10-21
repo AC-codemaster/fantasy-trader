@@ -3,7 +3,7 @@
     python3 tools/make_page.py --db db.json --injnews injury_news.json --out fantasy-trader.html
 
 page/template.html + engine/engine.js (PARAMS line from params/params.json) + page/ui.js, with the week's
-data (db.json, injury_news.json), and the builder (with pipeline/kdst.py, which it imports), runbook and parameter
+data (db.json, injury_news.json), the waiver upside bank (params/stash.json), and the builder (with pipeline/kdst.py, which it imports), runbook and parameter
 file embedded as fallbacks.
 The output is the page source to publish (Artifact publish with url = the live page).
 """
@@ -16,12 +16,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ftlib import ROOT, engine_source, esc_script, load_params_file, values  # noqa: E402
 
 
+def stash_text():
+    p = os.path.join(ROOT, "params", "stash.json")
+    return open(p).read() if os.path.exists(p) else "null"
+
+
 def build(db_text, injnews_text, params_path=None):
     pj = load_params_file(params_path)
     tpl = open(os.path.join(ROOT, "page", "template.html")).read()
     parts = {
         "DB": esc_script(db_text.strip()),
         "INJNEWS": esc_script(injnews_text.strip()),
+        "STASH": esc_script(stash_text().strip()),   # the waiver upside bank (params/stash.json)
         "BUILDER": esc_script(open(os.path.join(ROOT, "pipeline", "build_db.py")).read()),
         "KDST": esc_script(open(os.path.join(ROOT, "pipeline", "kdst.py")).read()),   # the builder imports it
         "PARAMS": esc_script(json.dumps(pj, indent=1)),

@@ -93,7 +93,7 @@ Skip if the regular season has no unplayed games. Then `python3 ../pipeline/scor
 frozen, week N−1 graded". On a conflict, re-read and repeat once.
 
 ## 10. Save everything
-- From the repo root: `git add -A params ledger data pipeline engine page backtest improve tests tools runbooks docs scorecard_page dist README.md`
+- From the repo root: `git add -A params ledger data pipeline engine page backtest improve tests tools runbooks docs scorecard_page dist waivers README.md`
   then commit ("Week N: refresh, grade, improve (<adopted change or 'no change'>)") and `git push`.
   If the push is rejected, `git pull --rebase` and push again.
 - **Check it landed:** `git fetch origin main`, then `git rev-parse HEAD` must equal `git rev-parse origin/main`.
