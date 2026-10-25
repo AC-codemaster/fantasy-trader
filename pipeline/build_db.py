@@ -325,7 +325,27 @@ if os.path.exists("gameday.json"):
     _gd = json.load(open("gameday.json"))
     GAMEDAY_AT = _gd.get("updated", "")
     for _t, _v in (_gd.get("teams") or {}).items():
-        GAMEDAY[CBS_TEAM.get(_t, _t)] = {name_key(x) for x in _v.get("inactive", [])}
+        _d = GAMEDAY.setdefault(CBS_TEAM.get(_t, _t), {})
+        for x in _v.get("inactive", []):
+            _d.setdefault(name_key(x), []).append(norm(x))
+# same team, same initial + last name (Bijan / Brian Robinson, ATL RBs): a source name that is exactly another
+# rostered player's name belongs to him, never to his initial-and-surname twin
+_ROSTER_TP = {(t, ps, norm(n)) for t, ps, n in zip(r.team, r.position, r.full_name)}
+_ROSTER_T = {(t, norm(n)) for t, n in zip(r.team, r.full_name)}
+
+
+def cbs_get(team, pos, full):
+    row = cbs.get((team, pos) + name_key(full))
+    if row is not None and norm(row.player) != norm(full) and (team, pos, norm(row.player)) in _ROSTER_TP:
+        return None
+    return row
+
+
+def gd_inactive(team, full):
+    names = GAMEDAY.get(team, {}).get(name_key(full))
+    if not names:
+        return False
+    return norm(full) in names or any((team, n) not in _ROSTER_T for n in names)
 news = {}
 NEWS_DATE = ""
 if os.path.exists("injury_news.json"):
@@ -344,7 +364,7 @@ def nth_game_week(team, start, n):
 def timeline(pid, ro):
     """Expected absence: the last week he misses (or None) and how we know."""
     team, pos, full = ro.team, ro.position, ro.full_name
-    row = cbs.get((team, pos) + name_key(full))
+    row = cbs_get(team, pos, full)
     nw = news.get((team, norm(full)))
     injury, label = "", ""
     cands = []
@@ -409,7 +429,7 @@ def timeline(pid, ro):
     # game day: his team's inactives are out. Inactive = out this week; anyone else on the team is active, which
     # settles a Questionable, Doubtful or Out tag for this week (not a reserve-list absence: those aren't listed)
     if team in GAMEDAY and ro.status not in ("RES", "EXE"):
-        if name_key(full) in GAMEDAY[team]:
+        if gd_inactive(team, full):
             if thru is None or thru < CUR_WEEK:
                 thru, why, src = CUR_WEEK, "inactive for this week's game", "game-day inactives"
             label = label if label.startswith(("IR", "PUP", "NFI", "Out for season")) else "Inactive"
@@ -427,7 +447,7 @@ def week_status(pid, ro):
     """This week's game status and last practice (start/sit chance he plays), and game-day active/inactive."""
     team, pos, full = ro.team, ro.position, ro.full_name
     out = {}
-    row = cbs.get((team, pos) + name_key(full))
+    row = cbs_get(team, pos, full)
     m = re.search(r"(Questionable|Doubtful|Out) for Week (\d+)", row.status) if row is not None else None
     if m and int(m.group(2)) == CUR_WEEK:
         out["gs"] = m.group(1)
@@ -439,7 +459,7 @@ def week_status(pid, ro):
         if pr:
             out["pr"] = pr
     if team in GAMEDAY and ro.status not in ("RES", "EXE"):
-        out["gd"] = "inactive" if name_key(full) in GAMEDAY[team] else "active"
+        out["gd"] = "inactive" if gd_inactive(team, full) else "active"
     return out
 
 

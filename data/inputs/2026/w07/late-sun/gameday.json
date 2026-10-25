@@ -1,0 +1,18 @@
+{"updated": "2026-10-25T14:55:00-04:00", "teams": {
+ "SF": {"inactive": ["Nick Bosa", "Mike Evans", "Deebo Samuel", "Luke Gifford", "Garret Wallow", "Marques Sigle", "Kurtis Rourke"], "src": "nfl.com week 7 inactives"},
+ "ATL": {"inactive": ["Jack Strand", "Divine Deablo", "Avieon Terrell", "Andy Dalton", "Olamide Zaccheaus", "Brian Robinson Jr.", "Billy Bowman Jr."], "src": "nfl.com week 7 inactives"},
+ "CIN": {"inactive": ["Russ Yeast", "Connor Lew", "Myles Hinton", "Shemar Stewart", "Landon Robinson"], "src": "nfl.com week 7 inactives"},
+ "BAL": {"inactive": ["Lamar Jackson", "Elijah Sarratt", "Jaylinn Hawkins", "Andrew Vorhees", "Broderick Washington"], "src": "nfl.com week 7 inactives"},
+ "TB": {"inactive": ["Demonte Capehart", "Emeka Egbuka", "Ayden Garnes", "Luke Goedeke", "Billy Schrauth", "Antoine Winfield Jr."], "src": "nfl.com week 7 inactives"},
+ "CAR": {"inactive": ["Ja'Tavion Sanders", "Jaelan Phillips", "Haynes King", "AJ Dillon", "Sam Hecht", "Stone Forsythe", "TeRah Edwards"], "src": "nfl.com week 7 inactives; cbssports.com live"},
+ "NYG": {"inactive": ["Jake Haener", "Jevón Holland", "Theo Johnson", "Marcus Mbow", "Greg Newsome II", "Nikko Reed", "Josh Sills"], "src": "nfl.com week 7 inactives"},
+ "HOU": {"inactive": ["Reed Blankenship", "Blake Fisher", "Marlin Klein", "David Montgomery", "Febechi Nwaiwu", "Jalen Pitre", "Nathan Thomas"], "src": "nfl.com week 7 inactives"},
+ "IND": {"inactive": ["CJ Allen", "Bryce Boettcher", "Sauce Gardner", "Anthony Gould", "Riley Leonard", "Dalton Tucker", "Tyler Warren"], "src": "nfl.com week 7 inactives"},
+ "MIN": {"inactive": ["Jakobe Thomas", "Max Brosmer", "Chuck Demmings", "Demond Claiborne", "Caleb Tiernan", "Elijah Williams"], "src": "nfl.com week 7 inactives"},
+ "MIA": {"inactive": ["Jalen Tolbert", "Marcellas Dial Jr.", "Reese Taylor", "Willie Gay Jr.", "Rob Beal Jr.", "DJ Campbell", "Chukwuebuka Godrik"], "src": "nfl.com week 7 inactives"},
+ "NYJ": {"inactive": ["Jarvis Brownlee Jr.", "Breece Hall", "Jack Heflin", "Max Mitchell", "Kene Nwangwu", "Joseph Ossai", "Dylan Parham"], "src": "nfl.com week 7 inactives"},
+ "CLE": {"inactive": ["Taylen Green", "Justin Jefferson", "Noah Igbinoghene", "Audric Estime", "Mike Hall", "Parker Brailsford"], "src": "nfl.com week 7 inactives"},
+ "TEN": {"inactive": ["Calvin Ridley", "Tyjae Spears", "Nick Singleton", "Jaylon Jones", "Brandon Crenshaw-Dickson", "Kylen Granson", "Jackie Marshall"], "src": "nfl.com week 7 inactives"},
+ "DEN": {"inactive": ["Pat Surtain II", "Sam Ehlinger", "Talanoa Hufanga", "Kage Casey", "Dallan Bentley", "Jordan Jackson", "Tyler Onyedim"], "src": "nfl.com week 7 inactives"},
+ "ARI": {"inactive": ["Jeremiyah Love", "Max Melton", "Carson Beck", "Andrew Wingard", "Jon Gaines II", "Albert Reese", "Walter Nolen III"], "src": "nfl.com week 7 inactives"}
+}}
