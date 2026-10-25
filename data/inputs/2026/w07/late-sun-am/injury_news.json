@@ -1,0 +1,85 @@
+{
+  "updated": "2026-10-20",
+  "players": [
+    {
+      "name": "De'Von Achane",
+      "team": "MIA",
+      "thru": 18,
+      "note": "Torn ACL vs. Chiefs; out for the season",
+      "src": "ESPN, CBS Sports",
+      "date": "2026-09-28"
+    },
+    {
+      "name": "Ricky Pearsall",
+      "team": "SF",
+      "thru": 18,
+      "note": "Season-ending IR; PCL surgery",
+      "src": "Yahoo Sports, Fox Sports",
+      "date": "2026-09-28"
+    },
+    {
+      "name": "Jaxson Dart",
+      "team": "NYG",
+      "thru": 18,
+      "note": "Meniscus; Giants say he misses the rest of the regular season",
+      "src": "Giants.com",
+      "date": "2026-09-28"
+    },
+    {
+      "name": "Trey Benson",
+      "team": "ARI",
+      "thru": 18,
+      "note": "Knee; waived injured in August and reverted to IR, no return timeline",
+      "src": "NBC Sports, CBS Sports",
+      "date": "2026-08-24"
+    },
+    {
+      "name": "Jake Tonges",
+      "team": "SF",
+      "thru": 18,
+      "note": "Torn MCL; Shanahan says season-ending surgery",
+      "src": "NBC Sports",
+      "date": "2026-09-16"
+    },
+    {
+      "name": "Jaylin Lane",
+      "team": "WAS",
+      "thru": 18,
+      "note": "Fractured, dislocated ankle in London (week 5 IR); likely to miss rest of season",
+      "src": "NFL Network via Field Level Media",
+      "date": "2026-10-05"
+    },
+    {
+      "name": "Josh Oliver",
+      "team": "MIN",
+      "thru": 18,
+      "note": "Torn biceps; surgery, reported out for the season",
+      "src": "ESPN (Fowler) via NBC Sports, RotoBaller",
+      "date": "2026-09-28"
+    },
+    {
+      "name": "Jalen Hurts",
+      "team": "PHI",
+      "thru": 18,
+      "note": "Blood clots (DVT, pulmonary emboli); IR, not cleared while on blood thinners (~3 months), expected to miss rest of season",
+      "src": "The Ringer, CNN, Philadelphia Inquirer",
+      "date": "2026-10-19"
+    },
+    {
+      "name": "Davante Adams",
+      "team": "LA",
+      "thru": 12,
+      "note": "Ruptured hamstring in week 6; McVay says out 6-10 weeks",
+      "src": "CBS Sports, ESPN",
+      "date": "2026-10-19"
+    },
+    {
+      "name": "Blake Grupe",
+      "team": "LA",
+      "thru": 18,
+      "note": "Torn ACL attempting a tackle in week 6; out for the year",
+      "src": "CBS Sports",
+      "date": "2026-10-19"
+    }
+  ]
+}
