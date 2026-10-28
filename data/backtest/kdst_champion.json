@@ -1,8 +1,8 @@
 {
- "date": "2026-10-20",
+ "date": "2026-10-28",
  "paramsVersion": 3,
  "paramsHash": "68ad70f30e",
- "codeHash": "46b70fcb71",
+ "codeHash": "4cca4c6346",
  "weeks": {
   "2024": [
    3,
@@ -45,7 +45,8 @@
    3,
    4,
    5,
-   6
+   6,
+   7
   ]
  }
 }
