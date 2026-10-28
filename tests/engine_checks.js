@@ -4,7 +4,8 @@
 //        TE top 10 by our projection) from the same team — managers should rarely accept (Oct 2 fix).
 // shough: the user's league — Tyler Shough for Tyler Warren + Jaylen Warren should be unlikely (Oct 6 fix).
 // finder: the trade finder lists deals that help both teams first, then ones that cost the partner only a sliver,
-//         and no lopsided ones unless asked (Oct 28: before, 37 of its top 40 cost the partner over 1 pt/wk).
+//         and no lopsided ones unless asked (Oct 28: before, 37 of its top 40 cost the partner over 1 pt/wk); with
+//         targets, only deals that reach them, most first; the healthy view clears all but season-ending injuries.
 const fs = require("fs");
 const [enginePath, dbPath, leaguePath] = process.argv.slice(2);
 const mod = { exports: {} };
@@ -66,20 +67,34 @@ function finderCheck(ctx, mine, opts) {
   let r;
   while (!(r = gen.next()).done);
   const w = Math.max(1, ctx.wSum), loss = opts.maxLoss != null ? opts.maxLoss : E.matchupScale(ctx).slight;
-  const rank = { both: 0, slight: 1, lopsided: 2 }, bad = [];
+  const rank = { both: 0, slight: 1, pay: 2, lopsided: 3 }, bad = [];
+  const tg = (opts.want || []).length + (opts.shop || []).length > 0, W = new Set(opts.want || []), H = new Set(opts.shop || []);
+  const cores = new Map();
   r.value.forEach((x, i) => {
-    const a = x.dA / w, b = x.dB / w;
-    if (i && rank[x.tier] < rank[r.value[i - 1].tier]) bad.push("order");
-    if (a < 0.25 - 1e-9 || x.accept < (opts.minAccept ?? 0.1) - 1e-9) bad.push("floor");
+    const a = x.dA / w, b = x.dB / w, prev = r.value[i - 1];
+    if (prev && rank[x.tier] < rank[prev.tier]) bad.push("order");
+    if (prev && tg && x.tier === prev.tier && x.goals > prev.goals) bad.push("goal order");
+    if (a < (tg ? (x.tier === "pay" ? -loss : 0) : 0.25) - 1e-9 || x.accept < (opts.minAccept ?? 0.1) - 1e-9) bad.push("floor");
     if (x.tier === "both" && b < 0) bad.push("both");
     if (x.tier === "slight" && !(b < 0 && b >= -loss - 1e-9 && a > -b)) bad.push("slight");
-    if (x.tier === "lopsided" && (!opts.lopsided || (b >= -loss && a > -b))) bad.push("lopsided");
+    if (x.tier === "pay" && !(tg && a < 0 && b > -a)) bad.push("pay");
+    if (x.tier === "lopsided" && (!opts.lopsided || (b >= -loss && a >= -loss && a + b > 0))) bad.push("lopsided");
     if (x.askFor && x.askFor.dB < x.askFor.dA) bad.push("askFor");
+    if (tg) {
+      const g = x.give.filter((id) => H.has(id)).length + x.get.filter((id) => W.has(id)).length;
+      if (!g || g !== x.goals) bad.push("goals");
+      const ck = x.partner + "|" + x.give.filter((id) => H.has(id)).sort() + ">" + x.get.filter((id) => W.has(id)).sort();
+      cores.set(ck, (cores.get(ck) || 0) + 1);
+      if (cores.get(ck) > 2) bad.push("core");
+    }
   });
   const n = (k) => r.value.filter((x) => x.tier === k).length;
-  return { both: n("both"), slight: n("slight"), lopsided: n("lopsided"), bad, loss,
+  return { both: n("both"), slight: n("slight"), pay: n("pay"), lopsided: n("lopsided"), bad, loss,
     worst: r.value.filter((x) => x.tier !== "lopsided").reduce((m, x) => Math.min(m, x.dB / w), 0),
-    sweet: r.value.filter((x) => x.sweet).length, ask: r.value.filter((x) => x.askFor).length };
+    sweet: r.value.filter((x) => x.sweet).length, ask: r.value.filter((x) => x.askFor).length,
+    wantHit: [...W].map((id) => r.value.filter((x) => x.get.includes(id)).length),
+    shopHit: [...H].map((id) => r.value.filter((x) => x.give.includes(id)).length),
+    maxGoals: r.value.reduce((m, x) => Math.max(m, x.goals || 0), 0) };
 }
 out.finder = {};
 {
@@ -101,5 +116,21 @@ if (leaguePath && fs.existsSync(leaguePath)) {
   L.settings.curWeek = DB.curWeek;
   const ctx = E.buildCtx(DB, L);
   out.finder.user = finderCheck(ctx, L.teams.find((t) => t.mine), {});
+  // targets, from Team 1's side: Nacua (Team 2) and Kyren Williams (Team 6) wanted, Chase Brown and CeeDee Lamb shopped
+  const t1 = L.teams.find((t) => t.name === "Team 1"), id = (n) => byName(n).id;
+  out.finder.target = finderCheck(ctx, t1, { want: [id("Puka Nacua"), id("Kyren Williams")], shop: [id("Chase Brown"), id("CeeDee Lamb")] });
+  // the healthy view: short and mid-season absences cleared, season-ending ones kept, the league itself untouched
+  const outBefore = JSON.stringify(L.out || {});
+  const h = E.healthyView(DB, L), hc = E.buildCtx(h.DB, h.L);
+  const cur = +L.settings.curWeek, last = +L.settings.lastWeek;
+  const outs = DB.players.map((p) => [p, E.effOut(L, p, cur)]).filter(([, o]) => o != null);
+  const hp = new Map(h.DB.players.map((p) => [p.id, p]));
+  // cleared: no out week left, and the usage model plays him every week but his bye
+  const all = (pid) => { const p = hp.get(pid), v = hc.val.get(pid);
+    return E.effOut(h.L, p, cur) == null && (!v || !p.m || hc.weeks.every(({ w }, i) => (DB.byes[p.t] || []).includes(w) || v.avail[i])); };
+  out.healthy = { cleared: h.cleared.length, short: outs.filter(([, o]) => o < last).length,
+    seasonKept: outs.filter(([, o]) => o >= last).every(([p]) => E.effOut(h.L, hp.get(p.id), cur) >= last),
+    clearedPlay: h.cleared.every(all), untouched: JSON.stringify(L.out || {}) === outBefore && DB.players.every((p) => !p.hx),
+    finder: finderCheck(hc, L.teams.find((t) => t.mine), { partnerIds: [L.teams[0].id] }) };
 }
 process.stdout.write(JSON.stringify(out));

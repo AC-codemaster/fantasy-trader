@@ -61,3 +61,40 @@ On the user's league (all partners) and a sample league with FAAB (three partner
 tiers in order, every deal above the floors and in the right tier, no deal outside the lopsided tier costing the
 partner more than the slight line, no lopsided deals unless asked, any FAAB ask leaving them at least your gain; at
 least 3 both-improve and 10 slight-cost deals in the user's league and 10 both-improve in the sample league.
+
+## Targeting players (Oct 28, 2026)
+
+"Target specific players" takes players you want (on other teams) and players you'd trade away (yours). The search
+then only evaluates deals that land a wanted player or move a shopped one (`findTrades` options `want`, `shop`):
+
+- **Goals first.** Within each tier, deals that reach more goals (wanted players received + shopped players sent)
+  come first, then the tier's usual score.
+- **A small price is allowed.** Your floor drops from +0.25 to 0 pts/week, and a fourth tier, **small price for you**,
+  lists deals that cost you under the slight line while they gain more than you lose (ranked by what they cost you,
+  least first). With lopsided deals on, anything else that gains the two lineups together is listed too.
+- **Wider search around targets.** Owners of wanted players are searched even when not among the picked partners;
+  around a wanted player the search adds 2-for-2 and 3-for-1 packages (a "3 for 1" shape is also on the page for
+  untargeted searches). Named players can be below the usual 6-point cut, and kickers or defenses if you name them.
+- **Variety.** Named players don't count toward the 3-deals-per-player limit; instead each "core" (partner + named
+  players moving, e.g. Lamb + Brown for Nacua) shows its best two versions across all tiers, so throw-in variants
+  don't crowd out other routes.
+- **FAAB both ways.** Money can now make a deal help both sides from either direction: yours when it costs them,
+  theirs (up to half) when it costs you or gains you too little, in the amount with the largest product of gains.
+
+Example (Week 8 data, the fixture league seen from Team 1, wanting Nacua and Kyren Williams, shopping Chase Brown and
+CeeDee Lamb): about 7,500 deals in 2 seconds; the top deals are Lamb + Brown (alone or with a throw-in) for Nacua,
+which help both lineups.
+
+## Ignoring injuries (Oct 28, 2026)
+
+"Ignore injuries (except season-ending)" runs the finder on `healthyView(DB, L)`: a copy of the data and league where
+every player whose out week falls before the league's last week is marked healthy (his `L.out` set to 0, his data
+timeline cleared), so he plays every week and his teammates' roles go back to normal. Players out through the last
+week stay out. A player who was out two or more weeks is flagged (`hx`) so the expert blend skips him, as it does
+while he's out, because the experts' rest-of-season rank prices in the games he'd miss. Injury tags stay, so this
+week's weekly rank (which prices the chance he sits) still isn't used for him. The page builds this view once per
+league change; the Trade tab keeps counting injuries, and the finder says so when the option was on.
+
+Checks: the targeted search reaches each wanted and shopped player, every deal reaches a goal, goals are ordered,
+cores are capped at two; the healthy view clears exactly the non-season-ending absences, keeps season-ending ones,
+lets cleared players play every non-bye week, and leaves the league untouched.

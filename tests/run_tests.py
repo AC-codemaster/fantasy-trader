@@ -100,7 +100,8 @@ def runner_reproduces_week5_freeze():
 @test
 def trade_engine_regressions():
     """Past bugs stay fixed: Allen for two starters (Oct 2), Shough for the two Warrens (Oct 6), and the trade finder
-    ranks deals that help both teams first, then slight costs to the partner, never lopsided ones unless asked (Oct 28)."""
+    ranks deals that help both teams first, then slight costs to the partner, never lopsided ones unless asked; with
+    targets it reaches each of them; the ignore-injuries view keeps only season-ending absences (Oct 28)."""
     with tempfile.TemporaryDirectory() as td:
         ep = os.path.join(td, "e.js")
         open(ep, "w").write(engine_source())
@@ -117,6 +118,12 @@ def trade_engine_regressions():
     assert f["user"]["both"] >= 3 and f["user"]["slight"] >= 10 and not f["user"]["lopsided"], f"trade finder, user league: {f['user']}"
     assert f["sample"]["both"] >= 10 and f["sampleLop"]["lopsided"] >= 1, f"trade finder, sample league: {f['sample']}, {f['sampleLop']}"
     assert f["sample"]["ask"] >= 1, "the finder never suggested evening out a deal with their FAAB"
+    t = f["target"]
+    assert not t["bad"], f"targeted finder: {sorted(set(t['bad']))}"
+    assert all(t["wantHit"]) and all(t["shopHit"]) and t["maxGoals"] >= 2, f"targeted finder misses a goal: {t}"
+    h = r["healthy"]
+    assert h["cleared"] == h["short"] > 0 and h["seasonKept"] and h["clearedPlay"] and h["untouched"], f"healthy view: {h}"
+    assert not h["finder"]["bad"], f"finder on the healthy view: {sorted(set(h['finder']['bad']))}"
 
 
 @test

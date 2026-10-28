@@ -15,7 +15,7 @@ let tab = "teams";
 let loaded = false;
 const ui = {
   trade: { mine: "", partner: "", give: new Set(), get: new Set(), mg: 0, mr: 0 },
-  finder: { partners: new Set(), shapes: new Set(["1-1", "2-1", "1-2"]), minAccept: 0.1, maxLoss: null, lopsided: false, running: false, results: null, ranFor: "" },
+  finder: { partners: new Set(), shapes: new Set(["1-1", "2-1", "1-2"]), minAccept: 0.1, maxLoss: null, lopsided: false, target: false, want: [], shop: [], msg: "", healthy: false, running: false, results: null, ranFor: "" },
   players: { q: "", pos: "", own: "all", sort: "a", dir: -1, sel: "" },
   imp: { input: "", season: 2026, status: { kind: "", text: "" }, pending: null, mine: null, busy: false },
   confirm: "",
@@ -28,8 +28,10 @@ const byLabel = new Map(DB.players.map((p) => [LABEL(p).toLowerCase(), p]));
 $("#playerList").innerHTML = DB.players.map((p) => `<option value="${esc(LABEL(p))}"></option>`).join("");
 $("#dataStamp").textContent = `Stats through Week ${DB.doneWeek ?? DB.curWeek - 1} · data updated ${DB.builtAt ? new Date(DB.builtAt).toLocaleDateString([], { month: "short", day: "numeric" }) : ""}`;
 
+let hctx = null;   // the trade finder's "ignore injuries" view, built on first use
 function rebuild() {
   ctx = buildCtx(DB, state);
+  hctx = null;
   owner = new Map();
   for (const t of state.teams) for (const id of t.roster) owner.set(id, t);
 }
@@ -189,7 +191,7 @@ function accept(data) {
 function resetUi() {
   ui.trade = { mine: "", partner: "", give: new Set(), get: new Set(), mg: 0, mr: 0 };
   if (ui.ss) Object.assign(ui.ss, { mine: "", opp: "", res: null, resFor: null, cands: [], left: { mine: new Set(), theirs: new Set() }, calc: null, calcFor: null, board: null, boardFor: null });
-  ui.finder.results = null; ui.finder.partners = new Set(); ui.finder.maxLoss = null;
+  ui.finder.results = null; ui.finder.partners = new Set(); ui.finder.maxLoss = null; ui.finder.want = []; ui.finder.shop = []; ui.finder.msg = "";
   if (ui.wv) Object.assign(ui.wv, { mine: "", res: null, resFor: null, odds: null, oddsFor: null, sel: "" });
   ui.players.sel = ""; ui.confirm = "";
   ui.imp.input = state.espn ? String(state.espn.leagueId) : ui.imp.input;
@@ -490,6 +492,7 @@ function verdictHTML(A, B, give, get, money) {
   let head;
   const ms = matchupScale(ctx), small = (x) => (Math.abs(x) < 0.05 ? "almost nothing" : `only ${fmt(Math.abs(x))} pts/week`);
   if (me > 0.15 && them >= 0) head = `Both lineups get better. You gain ${fmt(me)} pts/week, they gain ${fmt(them)}`;
+  else if (me < 0 && me >= -ms.slight && them > -me) head = `You give up ${small(me)} (about ${fmt(-me * ms.winPerPt * 100, 1)}% of a win a week), and they gain ${fmt(them)}`;
   else if (me > 0.15 && them >= -ms.slight && me > -them) head = `You gain ${fmt(me)} pts/week, and it costs them ${small(them)} (about ${fmt(-them * ms.winPerPt * 100, 1)}% of a win a week)`;
   else if (me > 0.15) head = `You win this trade by ${fmt(me - them, 1)} pts/week of swing`;
   else if (me <= 0.15 && me >= -0.15) head = `This barely changes your lineup`;
@@ -560,44 +563,84 @@ function moneyNote(A, B, e) {
 const TIERS = {
   both: { title: "Both teams improve", why: () => "Ranked by your gain × their gain, which favors deals that help both sides a real amount over ones that help one side a lot and the other barely." },
   slight: { title: "Slight cost to them", why: (loss, ms) => `They lose under ${fmt(loss, 2)} pts/week (about ${fmt(loss * ms.winPerPt * 100, 1)}% of a win each week, too small to show in their results) and you gain more than they lose. Ranked by what the two lineups gain together.` },
-  lopsided: { title: "Lopsided", why: (loss) => `They lose more than ${fmt(loss, 2)} pts/week. Ranked by your gain × the chance they accept.` },
+  pay: { title: "Small price for you", why: (loss, ms) => `You give up under ${fmt(loss, 2)} pts/week (about ${fmt(loss * ms.winPerPt * 100, 1)}% of a win each week) to reach your goal, and they gain more than you lose. Ranked by what it costs you, least first.` },
+  lopsided: { title: "Lopsided", why: (loss, ms, tg) => tg ? `One side loses more than ${fmt(loss, 2)} pts/week. Ranked by what the two lineups gain together.` : `They lose more than ${fmt(loss, 2)} pts/week. Ranked by your gain × the chance they accept.` },
 };
 /* The finder's "slight cost" line: what you set, or by default 1.5% of a win a week in your league. */
 function finderLoss(ms) { const F = ui.finder; return F.maxLoss != null ? F.maxLoss : ms.slight; }
+/* The league as if every injury had healed except season-ending ones (built once per league change). */
+function healthyCtx() {
+  if (!hctx) { const h = healthyView(DB, state); hctx = buildCtx(h.DB, h.L); hctx.cleared = h.cleared; }
+  return hctx;
+}
+/* Players named for the finder that still fit: wanted ones on another team, shopped ones on yours. */
+function finderGoals(me) {
+  const F = ui.finder;
+  F.want = F.want.filter((id) => pl(id) && owner.get(id) && owner.get(id) !== me);
+  F.shop = F.shop.filter((id) => pl(id) && me.roster.includes(id));
+  return F.target ? { want: F.want.slice(), shop: F.shop.slice() } : { want: [], shop: [] };
+}
+function targetBox(me) {
+  const F = ui.finder;
+  const chip = (id, side) => {
+    const p = pl(id), t = owner.get(id);
+    return `<span class="pchip on" style="display:inline-flex;gap:6px;align-items:center;cursor:default">${chipOf(p.p)}<span class="pname">${esc(p.n)}</span>${side === "want" && t ? `<span class="pchip-rec">${esc(t.name)}</span>` : ""}<button class="x" data-act="ftRm" data-side="${side}" data-id="${esc(id)}" aria-label="Remove ${esc(p.n)}">×</button></span>`;
+  };
+  const others = state.teams.filter((t) => t.id !== me.id);
+  const wantOpts = others.flatMap((t) => t.roster.filter((id) => pl(id) && !F.want.includes(id)).map((id) => `<option value="${esc(LABEL(pl(id)))}">${esc(t.name)}</option>`)).join("");
+  const shopOpts = me.roster.filter((id) => pl(id) && !F.shop.includes(id)).sort((x, y) => (ctx.ppg.a.get(y) || 0) - (ctx.ppg.a.get(x) || 0))
+    .map((id) => `<option value="${esc(id)}">${esc(pl(id).n)} · ${POSL(pl(id).p)}</option>`).join("");
+  return `<div class="grid cols-2">
+      <div class="field"><span class="label">Players you want</span>
+        <div class="row" style="gap:6px">${F.want.map((id) => chip(id, "want")).join("") || `<span class="notice">None yet</span>`}</div>
+        <input type="text" class="wide" id="ftWant" list="ftOthers" data-act="fwant" placeholder="Type a player on another team" autocomplete="off">
+        <datalist id="ftOthers">${wantOpts}</datalist>${F.msg ? `<span class="hint">${esc(F.msg)}</span>` : ""}</div>
+      <div class="field"><span class="label">Players you'd trade away</span>
+        <div class="row" style="gap:6px">${F.shop.map((id) => chip(id, "shop")).join("") || `<span class="notice">None yet</span>`}</div>
+        <select class="wide" id="ftShop" data-act="fshop"><option value="">Add one of yours…</option>${shopOpts}</select></div>
+    </div>
+    <p class="notice" style="margin:0">${F.want.length || F.shop.length ? "Only deals that land a player you want or move one you'd trade away are searched, and in each section the ones that do more of both come first. Owners of players you want are searched even if they aren't picked above, and around a player you want the finder also tries 2-for-2 and 3-for-1 packages. You may give up a little (under the slight-cost line) to land a target; the best two versions of each combination are shown." : "Name at least one player; until then the search runs like the regular finder."}</p>`;
+}
 function renderFinder() {
   const el = $("#panel-finder");
   if (state.teams.length < 2) { el.innerHTML = `<h2>Trade finder</h2><p class="lede">Searches every 1-for-1 and 2-for-1 deal between your team and the rest of the league and puts trades that help both teams first, then ones that cost the other manager only a sliver.</p>` + emptyLeague(); return; }
   const F = ui.finder, me = myTeam(), ms = matchupScale(ctx), loss = finderLoss(ms);
-  const shapes = [["1-1", "1 for 1"], ["2-1", "2 for 1 (you give 2)"], ["1-2", "1 for 2 (you get 2)"], ["2-2", "2 for 2 (slow)"]];
+  finderGoals(me);
+  const shapes = [["1-1", "1 for 1"], ["2-1", "2 for 1 (you give 2)"], ["1-2", "1 for 2 (you get 2)"], ["2-2", "2 for 2 (slow)"], ["3-1", "3 for 1 (you give 3, slow)"]];
+  const W = F.ranWant || new Set(), H = F.ranShop || new Set();
   const row = (r) => {
     const i = F.results.indexOf(r), t = teamById(r.partner);
     if (!t) return "";
-    const list = (ids, dollars) => ids.map((id) => pl(id) ? `<div class="row" style="gap:6px;flex-wrap:nowrap">${chipOf(pl(id).p)}<span class="pname">${esc(pl(id).n)}</span>${injTag(pl(id))}</div>` : "").join("")
-      + (dollars ? `<div class="row" style="gap:6px"><span class="chip faab">$</span><span class="pname">$${dollars} FAAB</span><span class="tag q">sweetener</span></div>` : "");
-    const them = perWeek(r.dB), seen = perWeek(r.perceived);
+    const goal = (id, side) => (side === "get" ? W : H).has(id) ? `<span class="tag mine" title="${side === "get" ? "A player you want" : "A player you'd trade away"}">${side === "get" ? "target" : "selling"}</span>` : "";
+    const list = (ids, dollars, side) => ids.map((id) => pl(id) ? `<div class="row" style="gap:2px 6px">${chipOf(pl(id).p)}<span class="pname">${esc(pl(id).n)}</span>${goal(id, side)}${injTag(pl(id))}</div>` : "").join("")
+      + (dollars ? `<div class="row" style="gap:6px"><span class="chip faab">$</span><span class="pname">$${dollars} FAAB</span><span class="tag q">${side === "give" ? "sweetener" : "evens it out"}</span></div>` : "");
+    const me_ = perWeek(r.dA), them = perWeek(r.dB), seen = perWeek(r.perceived);
+    const d2 = (x) => sgn(x, Math.abs(x) < 0.05 && x !== 0 ? 2 : 1);
     const ask = r.askFor ? `<div class="sub" style="white-space:normal;margin-top:4px" title="They'd still gain at least as much as you, and be ${pct(r.askFor.accept)} likely to accept">To even out the gains, ask for $${r.askFor.amount} FAAB too: you ${sgn(perWeek(r.askFor.dA))}, them ${sgn(perWeek(r.askFor.dB))}</div>` : "";
-    const convince = r.tier === "both" && seen < 0 ? `<div class="sub" title="Their lineup really does get better, but on market numbers it looks like a loss to them">walk them through it</div>` : "";
-    return `<tr><td>${esc(t.name)}${recordStr(t) || t.style != null ? `<div class="sub">${[recordStr(t), styleLabel(t.style)].filter(Boolean).join(" · ")}</div>` : ""}</td><td>${list(r.give, r.money && r.money.give)}</td><td>${list(r.get, r.money && r.money.get)}${ask}</td>
-      <td class="n good">${sgn(perWeek(r.dA))}</td><td class="n ${them >= 0 ? "good" : "bad"}">${sgn(them, Math.abs(them) < 0.05 && them !== 0 ? 2 : 1)}</td><td class="n">${sgn(seen)}${convince}</td>
+    const convince = r.tier === "both" && seen < 0 ? `<div class="sub" style="white-space:normal" title="Their lineup really does get better, but on market numbers it looks like a loss to them">walk them through it</div>` : "";
+    return `<tr><td>${esc(t.name)}${recordStr(t) || t.style != null ? `<div class="sub">${[recordStr(t), styleLabel(t.style)].filter(Boolean).join(" · ")}</div>` : ""}</td><td>${list(r.give, r.money && r.money.give, "give")}</td><td>${list(r.get, r.money && r.money.get, "get")}${ask}</td>
+      <td class="n ${me_ >= 0 ? "good" : "bad"}">${d2(me_)}</td><td class="n ${them >= 0 ? "good" : "bad"}">${d2(them)}</td><td class="n">${sgn(seen)}${convince}</td>
       <td class="n muted">${pct(r.accept)}</td><td><button class="btn small" data-act="openTrade" data-i="${i}">Open</button></td></tr>`;
   };
+  const tg = W.size + H.size > 0;
   const tier = (k) => {
     const rs = F.results.filter((r) => r.tier === k);
-    if (k === "lopsided" && !rs.length) return "";
+    if ((k === "lopsided" || k === "pay") && !rs.length) return "";
     const T = TIERS[k], lossUsed = F.lossUsed ?? loss;
-    return `<div class="tier-h"><b>${T.title}</b> <span class="tag soft">${rs.length}</span><div class="notice">${T.why(lossUsed, ms)}</div></div>`
+    return `<div class="tier-h"><b>${T.title}</b> <span class="tag soft">${rs.length}</span><div class="notice">${tg && k !== "lopsided" ? "Deals that reach more of your goals come first. " : ""}${T.why(lossUsed, ms, tg)}</div></div>`
       + (rs.length ? `<div class="tablewrap"><table>
       <thead><tr><th>Partner</th><th>You give</th><th>You get</th><th class="n">Your gain</th><th class="n">Their gain</th><th class="n">They see</th><th class="n">Accept</th><th></th></tr></thead>
-      <tbody>${rs.map(row).join("")}</tbody></table></div>` : `<div class="empty">${k === "both" ? "No deal in this search makes both lineups better. They're rare in deep leagues; try more partners or trade shapes." : "None in this search."}</div>`);
+      <tbody>${rs.map(row).join("")}</tbody></table></div>` : `<div class="empty">${k === "both" ? (tg ? "No deal in this search reaches your goals and makes both lineups better." : "No deal in this search makes both lineups better. They're rare in deep leagues; try more partners or trade shapes.") : "None in this search."}</div>`);
   };
   let body = "";
   if (F.running) body = `<div class="stack"><div class="progress"><i id="finderBar"></i></div><div class="notice" id="finderMsg">Starting…</div></div>`;
   else if (!F.results) body = `<div class="empty">Run a search to see trade ideas for <b>${esc(me.name)}</b>.</div>`;
-  else if (!F.results.length) body = `<div class="empty">No deal gains you at least a quarter point a week without costing them more than ${fmt(F.lossUsed ?? loss, 2)}. Allow more trade shapes or partners, raise the slight-cost line, or show lopsided deals too.</div>`;
-  else body = ["both", "slight", "lopsided"].map(tier).join("")
+  else if (!F.results.length) body = `<div class="empty">${tg ? `No deal reaches your goals without costing either side more than ${fmt(F.lossUsed ?? loss, 2)} pts/week. Raise the slight-cost line, name more players you'd trade away, or show lopsided deals too.` : `No deal gains you at least a quarter point a week without costing them more than ${fmt(F.lossUsed ?? loss, 2)}. Allow more trade shapes or partners, raise the slight-cost line, or show lopsided deals too.`}</div>`;
+  else body = (F.ranHealthy != null ? `<div class="callout" style="margin-bottom:14px">Injuries ignored in this search: ${F.ranHealthy} player${F.ranHealthy === 1 ? "" : "s"} with a short or mid-season absence counted as healthy; season-ending injuries still count. The Trade tab counts every injury, so its numbers for these deals can differ.</div>` : "")
+    + ["both", "slight", "pay", "lopsided"].map(tier).join("")
     + `<p class="notice" style="margin:10px 0 0">All columns are points per week on our projections. "They see" is how the deal looks to them on market numbers. Accept is the acceptance model's guess; it only screens out deals they'd almost surely refuse.</p>`;
   el.innerHTML = `${exampleBanner()}<h2>Trade finder</h2>
-    <p class="lede">Searches deals between <b>${esc(me.name)}</b> and the rest of the league where you gain at least a quarter point a week. Trades that make both lineups better come first, then ones that cost the other manager only a sliver. Lopsided deals stay hidden unless you ask for them.</p>
+    <p class="lede">Searches deals between <b>${esc(me.name)}</b> and the rest of the league${F.target ? ", aimed at the players you name below" : " where you gain at least a quarter point a week"}. Trades that make both lineups better come first, then ones that cost the other manager only a sliver. Lopsided deals stay hidden unless you ask for them.</p>
     <div class="box stack" style="margin-bottom:14px">
       <div class="row">
         <div class="field" style="flex:1 1 100%"><span class="label">Trade partners <span class="notice" style="text-transform:none;letter-spacing:0;font-family:var(--body)">· ${F.partners.size ? `${F.partners.size} picked` : "all teams"}</span></span>
@@ -609,8 +652,13 @@ function renderFinder() {
         <div class="field" style="min-width:220px;flex:1;max-width:360px"><span class="label">Slight cost: under <span id="lossLabel">${fmt(loss, 2)}</span> pts/wk</span><input type="range" id="finderLoss" min="0.1" max="3" step="0.05" value="${fmt(loss, 2)}" data-act="floss"><span class="hint"><span id="lossWin">About ${fmt(loss * ms.winPerPt * 100, 1)}% of a win each week for them.</span> ${F.maxLoss != null ? `<button class="btn small ghost" data-act="flossAuto">Back to ${fmt(ms.slight, 2)}</button>` : "Set from how much a point swings a matchup in your league."}</span></div>
         <div class="field" style="min-width:200px;flex:1;max-width:320px"><span class="label">Skip deals under <span id="minAccLabel">${pct(F.minAccept)}</span> to accept</span><input type="range" id="finderMin" min="0" max="0.5" step="0.05" value="${F.minAccept}" data-act="fmin"><span class="hint">A loose screen for deals they'd almost surely refuse.</span></div>
       </div>
-      <div class="row">${shapes.map(([k, l]) => `<label class="row" style="gap:6px"><input type="checkbox" id="shape-${k}" data-act="fshape" data-k="${k}" ${F.shapes.has(k) ? "checked" : ""}>${l}</label>`).join("")}
-        <label class="row" style="gap:6px"><input type="checkbox" id="finderLop" data-act="flop" ${F.lopsided ? "checked" : ""}>Also show lopsided deals</label></div>
+      <div class="row">${shapes.map(([k, l]) => `<label class="row" style="gap:6px"><input type="checkbox" id="shape-${k}" data-act="fshape" data-k="${k}" ${F.shapes.has(k) ? "checked" : ""}>${l}</label>`).join("")}</div>
+      <div class="row">
+        <label class="row" style="gap:6px"><input type="checkbox" id="finderTarget" data-act="ftarget" ${F.target ? "checked" : ""}>Target specific players</label>
+        <label class="row" style="gap:6px" title="Treat every player as healthy unless he's out for the rest of the fantasy season"><input type="checkbox" id="finderHealthy" data-act="fhealthy" ${F.healthy ? "checked" : ""}>Ignore injuries (except season-ending)</label>
+        <label class="row" style="gap:6px"><input type="checkbox" id="finderLop" data-act="flop" ${F.lopsided ? "checked" : ""}>Also show lopsided deals</label>
+      </div>
+      ${F.target ? targetBox(me) : ""}
       <div class="row"><button class="btn primary" data-act="runFinder" ${F.running ? "disabled" : ""}>${F.running ? "Searching…" : "Find trades"}</button>${F.results && !F.running ? `<span class="notice">${F.ranFor}</span>` : ""}</div>
     </div>
     <div class="box">${body}</div>`;
@@ -619,8 +667,11 @@ async function runFinder() {
   const F = ui.finder, me = myTeam();
   F.running = true; F.results = null;
   renderFinder();
+  await new Promise((res) => setTimeout(res, 0));
+  const C = F.healthy ? healthyCtx() : ctx, goals = finderGoals(me);
   F.lossUsed = finderLoss(matchupScale(ctx));
-  const gen = findTrades(ctx, me, { shapes: [...F.shapes], minAccept: F.minAccept, maxLoss: F.lossUsed, lopsided: F.lopsided, partnerIds: [...F.partners].filter((id) => teamById(id)) });
+  F.ranWant = new Set(goals.want); F.ranShop = new Set(goals.shop); F.ranHealthy = F.healthy ? C.cleared.length : null;
+  const gen = findTrades(C, me, { shapes: [...F.shapes], minAccept: F.minAccept, maxLoss: F.lossUsed, lopsided: F.lopsided, partnerIds: [...F.partners].filter((id) => teamById(id)), ...goals });
   let r, t0 = performance.now();
   while (!(r = gen.next()).done) {
     if (performance.now() - t0 > 40) {
@@ -632,8 +683,8 @@ async function runFinder() {
     }
   }
   F.results = r.value;
-  const n = (k) => r.value.filter((x) => x.tier === k).length;
-  F.ranFor = `${n("both")} that help both teams, ${n("slight")} at a slight cost to them${F.lopsided ? `, ${n("lopsided")} lopsided` : ""} for ${me.name}${F.partners.size ? ` with ${[...F.partners].map((id) => (teamById(id) || {}).name).filter(Boolean).join(", ")}` : ""}, searched ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  const n = (k) => r.value.filter((x) => x.tier === k).length, tg = goals.want.length + goals.shop.length > 0;
+  F.ranFor = `${n("both")} that help both teams, ${n("slight")} at a slight cost to them${tg ? `, ${n("pay")} at a small price for you` : ""}${F.lopsided ? `, ${n("lopsided")} lopsided` : ""} for ${me.name}${F.partners.size ? ` with ${[...F.partners].map((id) => (teamById(id) || {}).name).filter(Boolean).join(", ")}` : ""}${F.healthy ? ", injuries ignored" : ""}, searched ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
   F.running = false;
   if (tab === "finder") renderFinder();
 }
@@ -1166,6 +1217,8 @@ P(accept) = 1 / (1 + e^−((felt − edge) / predictability))</div>
     <li><b>Lopsided</b>, only when you ask for it: everything else, ranked the old way (your gain times the chance they accept).</li>
   </ul>
   <p>"Slight" is measured in wins. Every team's weekly score varies around its projection by about ${Math.round(TEAM_CV * 100)}% of a typical lineup, so in an even matchup each point a week moves the chance of winning by 1 ÷ (that spread × √(4π)): ${ctx ? `${esc(fmt(matchupScale(ctx).winPerPt * 100, 1))}% in this league, where lineups average ${esc(fmt(matchupScale(ctx).avg, 0))}` : "about 1.3% when lineups average 120"}. The default line is a loss worth 1.5% of a win each week (${ctx ? esc(fmt(matchupScale(ctx).slight, 2)) : "about 1.1"} pts/wk here): over the rest of a season, a tenth or two of a win, far inside the luck of the schedule and too small for him ever to see in his results. You can move it on the Finder tab. The acceptance chance only screens out deals below the minimum you set (10% to start); it's hard to calibrate for a real league, so it doesn't decide the order.</p>
+  <p><b>Targeting players.</b> Tick "Target specific players" and name players you want from other teams, players of yours you'd trade away, or both. The finder then searches only deals that land a player you want or move one you'd trade away, and in each section puts the deals that do more of both first. Since you asked for these players, a deal can cost you a little (under the slight-cost line) and still be listed, in its own "small price for you" section, as long as they gain more than you lose. Owners of players you want are always searched, packages around a player you want also go 2-for-2 and 3-for-1, and each combination of named players (say, Lamb and Brown for Nacua) shows its best two versions so filler swaps don't crowd out other routes. With FAAB on, asking for some of their budget can turn a deal that costs you a little into one that helps both.</p>
+  <p><b>Ignoring injuries.</b> "Ignore injuries (except season-ending)" reruns the projections as if every player were healthy unless he's out through the last week of your fantasy season: no missed weeks, and his teammates' roles go back to normal. A player who was out two or more weeks gets no expert blend, as while he was out, because the experts' rank prices in the games he'd miss. It's for judging players on their healthy roles; the Trade tab still counts every injury.</p>
   <h3>5. Injuries and absences</h3>
   <p>Each injured player gets a last week he's expected to miss, which removes him from those weeks of the lineup model. It comes from, in order of trust:</p>
   <ul>
@@ -1749,6 +1802,7 @@ document.addEventListener("click", (ev) => {
     }
     case "runFinder": runFinder(); break;
     case "flossAuto": ui.finder.maxLoss = null; renderFinder(); break;
+    case "ftRm": { const F = ui.finder, k = t.dataset.side === "want" ? "want" : "shop"; F[k] = F[k].filter((x) => x !== t.dataset.id); F.msg = ""; renderFinder(); break; }
     case "ssCand": {
       const S = ui.ss, id = t.dataset.id;
       if (S.cands.includes(id)) S.cands = S.cands.filter((x) => x !== id);
@@ -1816,6 +1870,18 @@ document.addEventListener("change", (ev) => {
     case "fmin": ui.finder.minAccept = +t.value; break;
     case "floss": ui.finder.maxLoss = +t.value; renderFinder(); break;
     case "flop": ui.finder.lopsided = t.checked; break;
+    case "fhealthy": ui.finder.healthy = t.checked; break;
+    case "ftarget": ui.finder.target = t.checked; renderFinder(); break;
+    case "fshop": if (t.value && !ui.finder.shop.includes(t.value)) ui.finder.shop.push(t.value); ui.finder.msg = ""; renderFinder(); break;
+    case "fwant": {
+      const F = ui.finder, p = byLabel.get(t.value.trim().toLowerCase()), o = p && owner.get(p.id), me = myTeam();
+      if (!t.value.trim()) break;
+      if (!p) F.msg = "Pick a name from the list.";
+      else if (!o) F.msg = `${p.n} isn't on a roster in this league.`;
+      else if (o === me) F.msg = `${p.n} is already yours: add him on the right to trade him away.`;
+      else { if (!F.want.includes(p.id)) F.want.push(p.id); F.msg = ""; }
+      renderFinder(); { const i = $("#ftWant"); if (i) i.focus(); } break;
+    }
     case "fshape": t.checked ? ui.finder.shapes.add(t.dataset.k) : ui.finder.shapes.delete(t.dataset.k); break;
     case "tname": team.name = t.value.trim() || team.name; changed({ quiet: true }); break;
     case "lname": state.name = t.value.trim() || "My league"; changed(); renderSwitcher(); break;
@@ -1915,7 +1981,7 @@ document.addEventListener("input", (ev) => {
     updateImport();
   }
   if (t.id === "espnPaste") { clearTimeout(t._tm); t._tm = setTimeout(() => readPasted(t.value), 250); }
-  if (t.dataset && t.dataset.act === "add" && byLabel.has(t.value.trim().toLowerCase())) t.dispatchEvent(new Event("change", { bubbles: true }));
+  if (t.dataset && (t.dataset.act === "add" || t.dataset.act === "fwant") && byLabel.has(t.value.trim().toLowerCase())) t.dispatchEvent(new Event("change", { bubbles: true }));
 });
 document.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter" && ev.target.matches("input[data-act='add']")) ev.target.dispatchEvent(new Event("change", { bubbles: true }));
