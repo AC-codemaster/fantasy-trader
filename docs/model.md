@@ -14,3 +14,6 @@ trade values, grading and tuning): `docs/kdst.md` (Oct 19, 2026).
 
 Waivers (the best pickups for one team: value on projection against the drop, upside from past free agents like him,
 week weights from your title chances, how long you can hold a stash, FAAB bids): `docs/waivers.md` (Oct 20, 2026).
+
+Trade finder (deals that help both teams first, then slight costs to the other manager; acceptance only screens):
+`docs/trade-finder.md` (Oct 28, 2026).

@@ -99,7 +99,8 @@ def runner_reproduces_week5_freeze():
 
 @test
 def trade_engine_regressions():
-    """Past bugs stay fixed: Allen for two starters (Oct 2) and Shough for the two Warrens (Oct 6)."""
+    """Past bugs stay fixed: Allen for two starters (Oct 2), Shough for the two Warrens (Oct 6), and the trade finder
+    ranks deals that help both teams first, then slight costs to the partner, never lopsided ones unless asked (Oct 28)."""
     with tempfile.TemporaryDirectory() as td:
         ep = os.path.join(td, "e.js")
         open(ep, "w").write(engine_source())
@@ -108,6 +109,14 @@ def trade_engine_regressions():
     assert r["allen"]["median"] < 0.10, f"Allen-for-two-starters median acceptance {r['allen']['median']:.2f} (was 0.37 before the fix)"
     assert r["allen"]["share50"] < 0.35, f"{r['allen']['share50']:.0%} of Allen two-for-ones at 50%+"
     assert r["shough"]["accept"] < 0.20, f"Shough for the Warrens at {r['shough']['accept']:.0%} (was 43% before the fix)"
+    f = r["finder"]
+    assert 0.5 < f["scale"]["slight"] < 2 and 0.008 < f["scale"]["winPerPt"] < 0.025, f"matchup scale {f['scale']}"
+    for k in ("sample", "sampleLop", "user"):
+        assert not f[k]["bad"], f"trade finder {k}: deals in the wrong tier or below the floors {sorted(set(f[k]['bad']))}"
+        assert f[k]["worst"] >= -f[k]["loss"] - 1e-9, f"trade finder {k} lists a deal costing the partner {f[k]['worst']:.2f}/wk"
+    assert f["user"]["both"] >= 3 and f["user"]["slight"] >= 10 and not f["user"]["lopsided"], f"trade finder, user league: {f['user']}"
+    assert f["sample"]["both"] >= 10 and f["sampleLop"]["lopsided"] >= 1, f"trade finder, sample league: {f['sample']}, {f['sampleLop']}"
+    assert f["sample"]["ask"] >= 1, "the finder never suggested evening out a deal with their FAAB"
 
 
 @test

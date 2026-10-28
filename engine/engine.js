@@ -1258,13 +1258,55 @@ function contextValues(ctx, id) {
   });
 }
 
-/* Search trades between my team and the others. Generator so the UI can yield between chunks. */
-function* findTrades(ctx, mine, opts) {
-  const { shapes = ["1-1", "2-1", "1-2"], minAccept = 0.25, partnerId = "", partnerIds = null, minPts = 6 } = opts || {};
+/* How much a point per week matters in a head-to-head league. Each team-week scores its expected lineup plus noise
+   with sd = TEAM_CV x the league's average lineup (seasonOdds simulates seasons the same way), so the margin of an even
+   matchup has sd √2·sd, and a point added to one side moves its chance to win that week by φ(0) / (√2·sd) =
+   1 / (sd·√(4π)): about 1.3% in a league whose lineups average 120. `slight` is the weekly loss that costs a team
+   SLIGHT_WIN of a win each week, the trade finder's default for a cost the other manager won't notice: over a
+   10-week rest of season it's about 0.15 wins, far inside the luck of who his players happen to score against. */
+const TEAM_CV = 0.18, SLIGHT_WIN = 0.015;
+function matchupScale(ctx) {
   ctx = ctx.root || ctx;
+  const teams = ctx.L.teams.filter((t) => t.roster && t.roster.length), wS = Math.max(1, ctx.wSum);
+  const avg = teams.length ? teams.reduce((s, t) => s + teamValue(ctx, t.roster, "a", true, teamDepth(ctx, t)), 0) / teams.length / wS : 100;
+  const sd = Math.max(1, TEAM_CV * avg), winPerPt = 1 / (sd * Math.sqrt(4 * Math.PI));
+  return { avg, sd, winPerPt, slight: SLIGHT_WIN / winPerPt };
+}
+
+/* Search trades between my team and the others. Generator so the UI can yield between chunks.
+   A trade is a deal between friends, not a heist, so results come back in tiers (best first within each), every
+   deal gaining you at least minGain pts/wk on our projections:
+     "both"      both lineups get better (their real change ≥ 0). Ranked by your gain × their gain per week, the
+                 product the Nash bargaining solution maximizes: a deal that helps both sides a real amount beats one
+                 that helps you a lot and them barely.
+     "slight"    it costs them under maxLoss pts/wk (default matchupScale().slight, 1.5% of a win a week) and you gain
+                 more than they lose, so the two lineups gain together. Ranked by that combined gain.
+     "lopsided"  only with lopsided: true, everything else you gain from; ranked the old way, your gain × P(accept).
+   The acceptance model screens (deals below minAccept are dropped) but doesn't rank: it's hard to calibrate for a
+   real league, and the real changes are what decide the tier. With FAAB, money from you can turn a deal into one
+   that helps both (as evenly as you can afford), and on a deal that helps them more than you, the finder notes how
+   much of their FAAB would even out the gains. Each player appears in at most 3 deals per tier; perTier deals per tier. */
+function* findTrades(ctx, mine, opts) {
+  const { shapes = ["1-1", "2-1", "1-2"], minAccept = 0.1, minGain = 0.25, maxLoss = null, lopsided = false,
+    partnerId = "", partnerIds = null, minPts = 6, perTier = 20 } = opts || {};
+  ctx = ctx.root || ctx;
+  const wS = Math.max(1, ctx.wSum);
+  const loss = maxLoss != null && maxLoss !== "" ? Math.max(0, +maxLoss) : matchupScale(ctx).slight;
+  const tierOf = (e) => {
+    const a = e.dA / wS, b = e.dB / wS;
+    if (a < minGain || e.accept < minAccept) return null;
+    if (b >= 0) return "both";
+    if (b >= -loss && a > -b) return "slight";
+    return lopsided ? "lopsided" : null;
+  };
+  const score = (e, tier) => (tier === "both" ? (e.dA / wS) * (e.dB / wS) : tier === "slight" ? (e.dA + e.dB) / wS : (e.accept * e.dA) / wS);
   const only = partnerIds && partnerIds.length ? new Set(partnerIds) : partnerId ? new Set([partnerId]) : null;
   const results = [], near = [];
   const useFaab = !!ctx.S.faab && !!ctx.DB.faabPool;
+  // FAAB moves in steps of 5% of the starting budget; you pay at most 60% of what you have left (a bit of slack for
+  // what money does to each side's waiver pickups)
+  const step = Math.max(1, Math.round((+ctx.S.faabBudget || 100) / 20)), myF = useFaab ? faabOf(ctx, mine) : 0;
+  const fixable = useFaab ? 1.2 * Math.floor(myF * 0.6) * faabPerDollar(ctx) : 0;
   // kickers and defenses stay out of the search (a kicker-for-kicker swap is rarely worth a message); the Trade
   // tab values them like anyone else
   const keep = (id) => !KD_POS.includes((ctx.byId.get(id) || {}).p) && (ctx.ppg.a.get(id) >= minPts || ctx.ppg.q.get(id) >= minPts);
@@ -1282,54 +1324,60 @@ function* findTrades(ctx, mine, opts) {
     if (shapes.includes("2-2")) for (const g of pairs(myC)) for (const r of pairs(thC)) combos.push([g, r]);
     for (const [give, get] of combos) {
       const e = evalTrade(ctx, mine, t, give, get);
-      if (e.dA > 1 && e.accept >= minAccept) results.push({ partner: t.id, give, get, ...e, score: e.accept * e.dA });
-      else if (useFaab && e.dA > 1.5 && e.accept >= 0.02) near.push({ t, give, get, dA: e.dA, accept: e.accept });
+      const tier = tierOf(e);
+      if (tier) results.push({ partner: t.id, give, get, ...e, tier, score: score(e, tier) });
+      // money can only make both sides whole when the two lineups gain together, and only up to what you can pay
+      if (useFaab && tier !== "both" && (e.dA + e.dB) / wS >= minGain && -e.dB <= fixable && e.accept >= 0.02) near.push({ t, give, get, sur: e.dA + e.dB });
       if (++n % 250 === 0) yield { n, partner: t.name, pi, of: partners.length };
     }
   }
-  // FAAB: sweeten near misses with your budget, and ask for theirs where they'd still say yes
   if (useFaab) {
-    const target = Math.max(minAccept, 0.5);
-    const step = Math.max(1, Math.round((+ctx.S.faabBudget || 100) / 20));
-    const myF = faabOf(ctx, mine);
-    near.sort((x, y) => y.dA * (y.accept + 0.1) - x.dA * (x.accept + 0.1));
+    // your FAAB (up to 60% of it) to turn a deal into one that helps both sides, trying the deals with the most
+    // combined gain first. Money moves gains from you to them, so of the amounts that leave both better off, the one
+    // with the largest your-gain × their-gain is used (the even split, when you can afford it); never more than
+    // evens the gains out
+    near.sort((x, y) => y.sur - x.sur);
     let k = 0;
     for (const c of near.slice(0, 60)) {
+      let best = null;
       for (let x = step; x <= Math.floor(myF * 0.6); x += step) {
         const e = evalTrade(ctx, mine, c.t, c.give, c.get, { give: x });
-        if (e.dA <= 1) break;
-        if (e.accept >= target) { results.push({ partner: c.t.id, give: c.give, get: c.get, ...e, score: e.accept * e.dA, sweet: true }); break; }
+        if (e.dA / wS < minGain) break;
+        if (e.dB >= 0 && e.accept >= minAccept && (!best || score(e, "both") > best.score)) best = { partner: c.t.id, give: c.give, get: c.get, ...e, tier: "both", score: score(e, "both"), sweet: true };
+        if (e.dB >= e.dA) break;
       }
+      if (best) results.push(best);
       if (++k % 10 === 0) yield { n, partner: "FAAB sweeteners", pi: partners.length, of: partners.length };
     }
-    results.sort((x, y) => y.score - x.score);
-    // deals they'd accept easily: how much of their FAAB you could also ask for (up to half of it)
-    for (const r of results.slice(0, 40)) {
-      if (r.money.give || r.accept < 0.75) continue;
+    // a deal that helps them more than you: the most of their FAAB (up to half) you can ask for while they still gain
+    // at least as much as you do
+    const top = results.filter((r) => r.tier === "both" && !r.money.give && r.dB > r.dA).sort((x, y) => y.score - x.score).slice(0, 40);
+    for (const r of top) {
       const t = ctx.L.teams.find((x) => x.id === r.partner), theirF = faabOf(ctx, t);
       let best = null, amt = 0;
       for (let y = step; y <= Math.floor(theirF * 0.5); y += step) {
         const e = evalTrade(ctx, mine, t, r.give, r.get, { get: y });
-        if (e.accept < Math.max(minAccept, 0.6)) break;
+        if (e.dB < e.dA || e.accept < minAccept) break;
         best = e; amt = y;
       }
-      if (best) r.askFor = { amount: amt, accept: best.accept, dA: best.dA };
+      if (best) r.askFor = { amount: amt, accept: best.accept, dA: best.dA, dB: best.dB };
     }
   }
-  results.sort((x, y) => y.score - x.score);
-  // keep the result list varied: any one player appears in at most 3 suggested deals
-  const seen = new Map();
+  const rank = { both: 0, slight: 1, lopsided: 2 };
+  results.sort((x, y) => rank[x.tier] - rank[y.tier] || y.score - x.score);
+  // keep each tier varied: any one player appears in at most 3 of its deals; a deal shows once (a FAAB-sweetened
+  // version that helps both sides beats the same players without money)
+  const seen = new Map(), dealSeen = new Set(), count = { both: 0, slight: 0, lopsided: 0 };
   const out = [];
-  const dealSeen = new Set();
   for (const r of results) {
-    const ids = r.get.concat(r.give);
     const dk = r.give.slice().sort().join("+") + ">" + r.get.slice().sort().join("+");
-    if (dealSeen.has(dk)) continue;
-    dealSeen.add(dk);
+    if (dealSeen.has(dk) || count[r.tier] >= perTier) continue;
+    const ids = r.get.concat(r.give).map((id) => r.tier + ":" + id);
     if (ids.some((id) => (seen.get(id) || 0) >= 3)) continue;
     for (const id of ids) seen.set(id, (seen.get(id) || 0) + 1);
+    dealSeen.add(dk);
+    count[r.tier]++;
     out.push(r);
-    if (out.length >= 40) break;
   }
   return out;
 }
@@ -2102,7 +2150,7 @@ function seasonOdds(ctx, mine, opts = {}) {
   let avg = 0;
   for (const r of mu) for (const x of r) avg += x;
   avg /= nT * nW;
-  const sd = Math.max(1, (opts.cv || 0.18) * avg);
+  const sd = Math.max(1, (opts.cv || TEAM_CV) * avg);
   const wins0 = teams.map((t) => (+t.wins || 0) + 0.5 * (+t.ties || 0)), pf0 = teams.map((t) => +t.pf || 0);
   const ix = new Map(teams.map((t, i) => [t.id, i]));
   const sch = (L.espn && L.espn.schedule) || [];
@@ -2655,4 +2703,4 @@ function applyEspn(prev, imp, DB, mineEspnTeamId) {
   return L;
 }
 
-if (typeof module !== "undefined" && module.exports) module.exports = { stashDecode, starterLines, contingent, stashScenarios, seasonOdds, waiverWeights, waiverBoard, rosterSize, irSlotted, POSITIONS, OFF_POS, KD_POS, POS_LABEL, K_KEYS, D_KEYS, PA_TIERS, YA_TIERS, kScore, dScore, kdModel, parseKdScoring, slotCount, lineupFast, POS_CODE, PARAMS, DIST, makeRng, pPlay, weekStatus, distInputs, simWeek, distSummary, lineupSlotList, fitSlots, bestByValue, startSit, needCalc, shareOpp, faabPerDollar, faabValue, faabOf, depthFor, teamDepth, streamLevels, overWaiver, roleNotes, usageModel, sharePts, effOut, weekOfDate, defaultOut, DEFAULT_SETTINGS, newLeague, buildCtx, valuations, teamValue, evalTrade, findTrades, contextValues, lineupForWeek, sampleLeague, scoreComp, vorpQ, marketPrice, marketPrices, perspective, fanOf, teamMood, styleOf, styleWeights, perceive, outWeek, parseLeagueInput, espnApiUrl, extractJson, parseEspn, applyEspn, SIGNALS };
+if (typeof module !== "undefined" && module.exports) module.exports = { stashDecode, starterLines, contingent, stashScenarios, seasonOdds, waiverWeights, waiverBoard, rosterSize, irSlotted, POSITIONS, OFF_POS, KD_POS, POS_LABEL, K_KEYS, D_KEYS, PA_TIERS, YA_TIERS, kScore, dScore, kdModel, parseKdScoring, slotCount, lineupFast, POS_CODE, PARAMS, DIST, makeRng, pPlay, weekStatus, distInputs, simWeek, distSummary, lineupSlotList, fitSlots, bestByValue, startSit, needCalc, shareOpp, faabPerDollar, faabValue, faabOf, depthFor, teamDepth, streamLevels, overWaiver, roleNotes, usageModel, sharePts, effOut, weekOfDate, defaultOut, DEFAULT_SETTINGS, newLeague, buildCtx, valuations, teamValue, evalTrade, findTrades, matchupScale, contextValues, lineupForWeek, sampleLeague, scoreComp, vorpQ, marketPrice, marketPrices, perspective, fanOf, teamMood, styleOf, styleWeights, perceive, outWeek, parseLeagueInput, espnApiUrl, extractJson, parseEspn, applyEspn, SIGNALS };
