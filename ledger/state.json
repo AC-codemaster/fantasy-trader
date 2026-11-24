@@ -1,5 +1,5 @@
 {
- "rotation": 6,
+ "rotation": 8,
  "probation": [
   {
    "change": {
@@ -37,17 +37,18 @@
   }
  ],
  "lastRun": {
-  "date": "2026-11-17",
-  "week": "2026-w11",
-  "tested": 10,
+  "date": "2026-11-24",
+  "week": "2026-w12",
+  "tested": 9,
   "adopted": null,
   "parity": {
-   "week": "2026-w07",
-   "n": 206,
-   "r": 0.993,
-   "meanAbsDiff": 0.44,
+   "week": "2026-w11",
+   "n": 196,
+   "r": 0.987,
+   "meanAbsDiff": 0.56,
    "ok": true
-  }
+  },
+  "withdrawn": "expertWeight 0.2 \u2192 0.25, weeklyExpert 0.25 \u2192 0.3 (tests failed: trade_engine_regressions)"
  },
- "rotation_kd": 2
+ "rotation_kd": 3
 }

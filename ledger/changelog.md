@@ -123,3 +123,11 @@ Held out: breakout chances calibrated; stash-zone rank correlation 0.28 vs 0.22 
 settings `bench`, `ir`, `playoffTeams` (ESPN import fills them); `usageModel` also returns each player's week-0 pool
 denominators. Projections, trade values and the archived engines are unchanged (tests: page parity with the Week 5
 engine, trade regressions).
+
+## 2026-11-24 — parameters v4: expertWeight 0.2 → 0.25, weeklyExpert 0.25 → 0.3
+
+Graded live weeks: -0.0090 ± 0.0044 pts (z -2.03, 4 weeks). Leagues that follow the model's expert defaults pick this up.
+
+**Withdrawn the same day:** `tests/run_tests.py` failed with v4 (`trade_engine_regressions`: the trade finder's sample
+league found 6 deals that help both teams, needs 10, and no lopsided deals when asked). Parameters stay at v3; the
+change is not on probation.
